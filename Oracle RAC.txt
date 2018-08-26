@@ -1,0 +1,23 @@
+###################Oracle 11g RAC搭建(VMWare环境)########################
+安装环境与网络规划
+安装环境
+主机操作系统：windows10
+虚拟机VMWare12：两台Oracle Linux R7
+Oracle Database software:Oracle11gR2
+Cluster Ssoftware:Oracle grid infrastructure 11gR2(11.2.0.4.0)
+共享存储：ASM
+
+查看系统内核：
+[root@rac1 ~]#lsb_release -a
+[root@rac1 ~]#uname -r
+细节说明：安装Oracle Linux时，分配两张网卡，一个为NAT，用于连接外网，后面再手动分配静态IP；另一个为Host Only，用于两台虚拟机节点的通讯。每台虚拟机swap至少2.5G，boot分区500M，其他空间分配为LVM方式管理，LVM划分2.5G为swap，其他为/。我是系统默认的，应为后面swap、shm等都可以随时调整的。
+两台服务器主机名分别为rac1、rac2
+如果条件允许，两台虚拟机操作系统，放在不同硬盘里面，否则I/O很吃力
+由于采用的是共享存储ASM，而且搭建集群需要共享空间作注册盘（OCR）和投票盘（cotingdisk）。
+VMWare创建共享存储方式：
+进入VMWare安汉族昂目录，cmd命令下执行如下命令：
+d:
+cd D:\Program Files (x86)\VMware Workstation
+vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 D:\Virtual Machines\OracleRAC\Sharedisk\ocr.vmdk
+vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 D:\virtual Machines\OracleRAC\Sharedisk\ocr2.vmdk
+
