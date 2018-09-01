@@ -19,5 +19,280 @@ VMWare创建共享存储方式：
 d:
 cd D:\Program Files (x86)\VMware Workstation
 vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 D:\Virtual Machines\OracleRAC\Sharedisk\ocr.vmdk
-vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 D:\virtual Machines\OracleRAC\Sharedisk\ocr2.vmdk
+vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 D:\Virtual Machines\OracleRAC\Sharedisk\ocr2.vmdk
+vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 D:\Virtual Machines\OracleRAC\Sharedisk\votingdisk.vmdk
+vmware-vdiskmanager.exe -c -s 20000Mb -a lsilogic -t 2 D:\Virtual Machines\OracleRAC\Sharedisk\data.vmdk
+vmware-vdiskmanager.exe -c -s 10000Mb -a lsilogic -t 2 D:\Virtual Machines\OracleRAC\Sharedisk\backup.vmdk
+这里创建了两个1G的OCR盘，一个1G的投票盘，一个20G的数据盘，一个10G的备份盘
+修改rac1虚拟机目录下的vmx配置文件：
+##################################
+scsi1.present = "TRUE"
+scsi1.virtualDev = "lsilogic"
+scsi1.sharedBus = "virtual"
+
+scsi1:1.present = "TRUE"
+scsi1:1.mode = "independent-persistent"
+scsi1:1.filename = "D:\irtual Machines\OracleRAC\Sharedisk\cor.vmdk"
+scsi1:1.deviceType = "plainDisk"
+
+scsi1:2.present = "TRUE"
+scsi1:2.mode = "independent-persistent"
+scsi1:2.filename = "D:\Virtual Machines\OracleRAC\Sharedisk\votingdisk.vmdk"
+scsi1:2.deviceType = "plainDisk"
+
+scsi1:3.present = "TRUE"
+scsi1:3.mode = "independent-persistent"
+scsi1:3.filename = "D:\Virtual Machines\OracleRAC\Sharedisk\data.vmdk"
+scsi1:3.deviceType = "plainDisk"
+
+scsi1:4.present = "TRUE"
+scsi1:4.mode = "independent=persistent"
+scsi1:4.filename = "D:\Virtual Machines\OracleRAC\Sharedisk\backup.vmdk"
+scsi1:4.deviceType = "plainDisk"
+
+scsi1:5.present = "TRUE"
+scsi1:5.mode = "independent-persistent"
+scsi1:5.filename = "D:\Virtual Machines\OracleRAC\Sharedisk\ocr2.vmdk"
+scsi1:5.deviceType = "plainDisk"
+
+disk.locking = "false"
+diskLib.dataCacheMaxSize = "0"
+diskLib.dataCacheMaxReadAheadSize = "0"
+diskLib.DataCacheMinReadAheadSize = "0"
+diskLib.dataCachePageSize = "4096"
+diskLib.maxUnsyncedWrites = "0"
+
+修改rac2的vmx配置文件：
+scsi1.shareBus = "virtual"
+disk.locking = "false"
+diskLib.dataCacheMaxSize = "0"
+diskLib.dataCacheMaxReadAheadSize = "0"
+diskLib.DataCacheMinReadAheadSize = "0"
+diskLib.dataCachePageSize = "4096"
+diskLib.maxUnsynceWrites = "0"
+gui.lastPoweredViewMode = "fullscreen"
+checkpoint.vmState = ""
+usb:0.present = "TRUE"
+usb:0.deviceType = "hid"
+usb:0.port = "0"
+usb:0.parent = "-1"
+这里就在rac2的细腻及设置中手动添加好五个虚拟硬盘，要求是永久独立属性。
+
+网络规划
+硬件要求：
+每隔服务器节点至少2块网卡。
+如果通过OUI安装Oracle集群软件，需要保证每个节点用于外网或私网接口名一直。比如node1的eth0对应node2的eth0。
+IP配置要求：指定静态scan ip，（用于实现集群的负载均衡，集群软件根据情况分配给某一节点）。每个节点一个ip、一个虚拟ip、一个私有ip。
+ip、vip、scan-ip需要在同一个网段。
+---------------------------------
+Home Node   Given Name   Type    Address
+rac1        rac1         public  192.168.248.101
+rac1        rac1-vip     public  192.168.248.201
+rac1        rac1-priv    private 192.168.109.101
+rac2        rac2         public  192.168.248.102
+rac2        rac2-vip     public  192.168.248.202
+rac2        rac2-priv    private 192.168.109.102
+scan ip     scan-ip      virtual 192.168.248.110
+
+#######################################################
+环境配置
+默认情况下，下面操作在每个节点都要进行，密码均设置为oracle
+1、关闭防火墙
+setenforce 0
+vi /etc/sysconfig/selinux/config
+SELINUX=disabled
+service iptables stop
+chkconfig iptables off
+或者systemctl stop firewalld
+2、创建必要的用户、组和目录，并授权
+/usr/sbin/groupadd -g 1000 oinstall
+/usr/sbin/groupadd -g 1020 asmadmin
+/usr/sbin/groupadd -g 1021 asmdba
+/usr/sbin/groupadd -g 1022 asmoper
+/usr/sbin/groupadd -g 1031 dba
+/usr/sbin/groupadd -g 1032 oper
+useradd -u 1100 -g oinstall -G asmadmin,asmdba,asmoper,oper,dba,grid
+useradd -u 1101 -g oinstall -G dba,asmdba,oper oracle
+mkdir -p /u01/app/11.2.0/grid
+mkdir -p /u01/app/grid
+mkdir /u01/app/oracle
+chown -R grid:oinstall /u01
+chown oracle:oinstall /u01/app/oracle
+chmod -R 775 /u01/
+参照官方文档，采用GI和DB分开安装和权限的策略，对于多实例管理有利
+3、节点配置检查
+内存至少2.5GB
+当内存2.5GB-16GB时，swap需要大于等于系统内存；当内存大于16GB时，swap16GB即可
+查看swap大小：
+grep MemTotal /proc/meminfo
+grep SwapTotal /proc/meminfo
+swap调整方法：
+先计算出block，block=swap分区大小*1024，如扩展64Mswapfile，block=64*1024=65535
+dd if=/dev/zero of=swapfile bs=1024 count=65535
+mkswap /swapfile
+swapon /swapfile
+vi /etc/fstab
+增加如下一行
+/swap swap swap defaults 0 0
+cat /proc/swaps或者free -m
+关闭扩展的swap分区:
+swapoff /swapf
+4、系统文件设置
+(1)、内核参数设置：
+vi /etc/sysctl.conf
+kernel.msgmnb = 65536
+kernel.msgmax = 65536
+kernel.shmmax = 68719476736
+kernel.shmall = 4294967296
+fs.aio-max-nr = 1048576
+fs.file-max = 6815744
+kernel.shmall = 2097152
+kernel.shmmax = 1306910720
+kernel.shmmni = 4096
+kernel.sem = 250 32000 100 128
+net.ipv4.ip_local_port_range = 9000 65500
+net.core.rmem_default =262144
+net.core.rmem_max = 4194304
+net.core.wmem_default = 262144
+net.core.wmem_max = 1048586
+net.ipv4.tcp_wmem = 262144 262144 262144
+net.ipv4.tcp_rmem = 4194304 4194304 4194304
+立即生效：
+sysctl -p
+也可以采用Linux Oracle光盘中的相关包来调整
+cd /mnt/cdrom/Packages
+ll | grep preinstall
+(2)、配置oracle、grid用户的shell限制
+vi /etc/security/limits.conf
+grid soft nproc 2047
+grid hard nproc 16384
+grid soft nofile 1024
+grid hard nofile 65536
+oracle soft nproc 2047
+oracle hard nproc 16384
+oracle soft nofile 1024
+oracle hard nofile 65535
+(3)、配置login
+vi /etc/pam.d/login
+session required pam_limits.so
+
+安装需要的软件包，使用rpm -qa | grep package-name检测下卖弄这些包是否安装
+没有就需要安装这些依赖打补丁
+binutils-2.20.51.0.2-5.11.el6 (x86_64)
+compat-libcap1-1.10-1 (x86_64)
+compat-libstdc++-33-3.2.3-69.el6 (x86_64)
+compat-libstdc++-33-3.2.3-69.el6.i686
+gcc-4.4.4-13.el6 (x86_64)
+gcc-c++-4.4.4-13.el6 (x86_64)
+glibc-2.12-1.7.el6 (i686)
+glibc-2.12-1.7.el6 (x86_64)
+glibc-devel-2.12-1.7.el6 (x86_64)
+glibc-devel-2.12-1.7.el6.i686
+ksh
+libgcc-4.4.4-13.el6 (i686)
+libgcc-4.4.4-13.el6 (x86_64)
+libstdc++-4.4.4-13.el6 (x86_64)
+libstdc++-4.4.4-13.el6.i686
+libstdc++-devel-4.4.4-13.el6 (x86_64)
+libstdc++-devel-4.4.4-13.el6.i686
+libaio-0.3.107-10.el6 (x86_64)
+libaio-0.3.107-10.el6.i686
+libaio-devel-0.3.107-10.el6 (x86_64)
+libaio-devel-0.3.107-10.el6.i686
+make-3.81-19.el6
+sysstat-9.0.4-11.el6 (x86_64)
+可以使用本地源的方式：
+mkdir /mnt/cdrom
+vi /etc/fstab
+/dev/cdrom      /media/cdrom    iso9660 defaults        0       0
+mount -a
+或者mount /dev/cdrom /mnt/cdrom/
+vi /etc/yum.repos.d/dvd.repo
+[dvd]
+name=dvd
+baseurl=file:///mnt/cdrom
+gpgcheck=0
+enabled=1
+使用：
+yum clean all
+yum.makecache
+yum install gcc gcc-c++ glibc* glib-devel* ksh等等
+5、配置IP和hosts、hostname
+(1)、配置IP
+这里的网管由vmware中网络设置决定，即网卡接口中的vmware addapter，可以看做一个dns软件服务。eth0为连接外网，eth1内网心跳
+rac1主机下：
+vi /etc/sysconfig/network-scripts/ifcfg-eth0
+IPADDR=192.168.248.101
+PREFIX=24
+GATEWAY=192.168.248.2
+DNS1=114.114.114.114
+vi /etc/sysconfig/network-scripts/ifcfg-eth1
+IPADDR=192.168.109.101
+PREFIX=24
+rac2主机下：
+vi /etc/sysconfig/network-scripts/ifcfg-eth0
+IPADDR=192.168.248.102
+PREFIX=24
+GATEWAY=192.168.248.2
+DNS1=114.114.114.114
+vi /etc/sysconfig/network-scripts/ifcfg-eth1
+IPADDR=192.168.109.102
+PREFIX=24
+(2)、配置hostname
+rac1主机下：
+vi /etc/sysconfig/network
+NETWORKING=yes
+HOSTNAME=rac1
+GATEWAY=192.168.248.2
+NOZEROCONF=yes
+rac2主机下：
+vi /etc/sysconfig/network
+NETWORKING=yes
+HOSTNAME=rac2
+GATEWAY=192.168.248.2
+NOZEROCONF=yes
+(3)、配置hosts
+rac1和rac2均要添加：
+vi /etc/hosts
+192.168.248.101 rac1
+192.168.248.201 rac1-vip
+192.168.109.101 rac1-priv
+
+192.168.248.102 rac2
+192.168.248.202 rac2-vip
+192.168.109.102 rac2-priv
+
+192.168.248.110 scan-ip
+
+
+配置grid和oracle用户环境变量
+oracle_sid需要根据节点不同而修改
+su -grid
+vi .bash_profile
+export TMP=/tmp
+export TMPDIR=$TMP
+export ORACLE_SID=+ASM1   # RAC1
+export ORACLE_SID=+ASM2   # RAC2
+export ORACLE_BASE=/u01/app/grid
+export ORACLE_HOME=/u01/app/11.2.0/grid
+export PATH=/usr/sbin:$PATH
+export PATH=$ORACLE_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$ORACLE_HOME/lib:/usr/lib
+export CLASSPATH=$ORACLE_HOME/jre:$RACLE_HOME/jlib:$ORACLE_HOME/rdbms/jlib
+umask 022
+需要注意的是ORACLE_UNQNAME是数据库名，创建数据库时指定多个节点是会创建多个实例，ORACLE_SID指的是数据库实例名
+su - oracle
+vi .bash_profile
+export TMP=/tmp
+export TMPDIR=$TMP
+export ORACLE_SID=orcl1   # RAC1
+export ORACLE_SID=orcl2   # RAC2
+export ORACLE_UNQNAME=orcl
+export ORACLE_BASE=/u01/app/oracle
+export ORACLE_HOME=$ORACLE_BASE/product/11.2.0/db_1
+export TNS_ADMIN=$ORACLE_HOME/network/admin
+export PATH=/usr/sbin:$PATH
+export PATH=$ORACLE_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$ORACLE_HOME/lib:/lib:/usr/lib
+使配置文件生效：source .bash_profile
 
