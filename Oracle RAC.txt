@@ -18,11 +18,11 @@ VMWare创建共享存储方式：
 进入VMWare安汉族昂目录，cmd命令下执行如下命令：
 d:
 cd D:\Program Files (x86)\VMware Workstation
-vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 D:\Virtual Machines\OracleRAC\Sharedisk\ocr.vmdk
-vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 D:\Virtual Machines\OracleRAC\Sharedisk\ocr2.vmdk
-vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 D:\Virtual Machines\OracleRAC\Sharedisk\votingdisk.vmdk
-vmware-vdiskmanager.exe -c -s 20000Mb -a lsilogic -t 2 D:\Virtual Machines\OracleRAC\Sharedisk\data.vmdk
-vmware-vdiskmanager.exe -c -s 10000Mb -a lsilogic -t 2 D:\Virtual Machines\OracleRAC\Sharedisk\backup.vmdk
+vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 "D:\Virtual Machines\OracleRAC\Sharedisk\ocr.vmdk"
+vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 "D:\Virtual Machines\OracleRAC\Sharedisk\ocr2.vmdk"
+vmware-vdiskmanager.exe -c -s 1000Mb -a lsilogic -t 2 "D:\Virtual Machines\OracleRAC\Sharedisk\votingdisk.vmdk"
+vmware-vdiskmanager.exe -c -s 20000Mb -a lsilogic -t 2 "D:\Virtual Machines\OracleRAC\Sharedisk\data.vmdk"
+vmware-vdiskmanager.exe -c -s 10000Mb -a lsilogic -t 2 "D:\Virtual Machines\OracleRAC\Sharedisk\backup.vmdk"
 这里创建了两个1G的OCR盘，一个1G的投票盘，一个20G的数据盘，一个10G的备份盘
 修改rac1虚拟机目录下的vmx配置文件：
 ##################################
@@ -32,7 +32,7 @@ scsi1.sharedBus = "virtual"
 
 scsi1:1.present = "TRUE"
 scsi1:1.mode = "independent-persistent"
-scsi1:1.filename = "D:\irtual Machines\OracleRAC\Sharedisk\cor.vmdk"
+scsi1:1.filename = "D:\Virtual Machines\OracleRAC\Sharedisk\cor.vmdk"
 scsi1:1.deviceType = "plainDisk"
 
 scsi1:2.present = "TRUE"
@@ -69,7 +69,7 @@ diskLib.dataCacheMaxSize = "0"
 diskLib.dataCacheMaxReadAheadSize = "0"
 diskLib.DataCacheMinReadAheadSize = "0"
 diskLib.dataCachePageSize = "4096"
-diskLib.maxUnsynceWrites = "0"
+diskLib.maxUnsyncedWrites = "0"
 gui.lastPoweredViewMode = "fullscreen"
 checkpoint.vmState = ""
 usb:0.present = "TRUE"
