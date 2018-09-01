@@ -46,7 +46,7 @@ scsi1:3.filename = "D:\Virtual Machines\OracleRAC\Sharedisk\data.vmdk"
 scsi1:3.deviceType = "plainDisk"
 
 scsi1:4.present = "TRUE"
-scsi1:4.mode = "independent=persistent"
+scsi1:4.mode = "independent-persistent"
 scsi1:4.filename = "D:\Virtual Machines\OracleRAC\Sharedisk\backup.vmdk"
 scsi1:4.deviceType = "plainDisk"
 
@@ -72,10 +72,10 @@ diskLib.dataCachePageSize = "4096"
 diskLib.maxUnsyncedWrites = "0"
 gui.lastPoweredViewMode = "fullscreen"
 checkpoint.vmState = ""
-usb:0.present = "TRUE"
-usb:0.deviceType = "hid"
-usb:0.port = "0"
-usb:0.parent = "-1"
+--usb:0.present = "TRUE"
+--usb:0.deviceType = "hid"
+--usb:0.port = "0"
+--usb:0.parent = "-1"
 这里就在rac2的细腻及设置中手动添加好五个虚拟硬盘，要求是永久独立属性。
 
 网络规划
