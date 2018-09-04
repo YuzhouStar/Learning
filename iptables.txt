@@ -1,0 +1,15 @@
+鸟哥的私房菜
+linux防火墙与nat伺服器
+防火墙设置脚本，分为以下三部分：
+（1）、iptables.rule:设定最基本的规则，包括清除防火墙规则、载入模组、设定服务可接受等；
+（2）、iptables.deny:设定抵挡某些恶意主机的进入；
+（3）、iptables.allow:设定允许某些自定的后门来源主机！
+mkdir -p /usr/local/virus/iptables
+cd /usr/local/virus/iptables
+vi iptables.rule
+#!/bin/bash
+
+#请先输入你的相关参数，不要输入错误了！
+EXTIF="eth0"   #这个是可以连上public ip的网路界面
+INIF="eth1"   #内部LAN的连接接口；若无则写成INIF=""
+
