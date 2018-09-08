@@ -32,7 +32,7 @@ scsi1.sharedBus = "virtual"
 
 scsi1:1.present = "TRUE"
 scsi1:1.mode = "independent-persistent"
-scsi1:1.filename = "D:\Virtual Machines\OracleRAC\Sharedisk\cor.vmdk"
+scsi1:1.filename = "D:\Virtual Machines\OracleRAC\Sharedisk\ocr.vmdk"
 scsi1:1.deviceType = "plainDisk"
 
 scsi1:2.present = "TRUE"
@@ -83,7 +83,7 @@ checkpoint.vmState = ""
 每隔服务器节点至少2块网卡。
 如果通过OUI安装Oracle集群软件，需要保证每个节点用于外网或私网接口名一直。比如node1的eth0对应node2的eth0。
 IP配置要求：指定静态scan ip，（用于实现集群的负载均衡，集群软件根据情况分配给某一节点）。每个节点一个ip、一个虚拟ip、一个私有ip。
-ip、vip、scan-ip需要在同一个网段。
+ip、vip、scan-ip需要在同一个网段。vip和scan-ip不需要指定设置到某一具体的网卡，设置了在安装的时候会报错，只需要配置一个外网网卡（nat的，应该使用桥接或则仅主机也可以）和一个仅主机（用于各节点之间的心跳）的网卡。
 ---------------------------------
 Home Node   Given Name   Type    Address
 rac1        rac1         public  192.168.248.101
@@ -111,7 +111,7 @@ chkconfig iptables off
 /usr/sbin/groupadd -g 1022 asmoper
 /usr/sbin/groupadd -g 1031 dba
 /usr/sbin/groupadd -g 1032 oper
-useradd -u 1100 -g oinstall -G asmadmin,asmdba,asmoper,oper,dba,grid
+useradd -u 1100 -g oinstall -G asmadmin,asmdba,asmoper,oper,dba grid
 useradd -u 1101 -g oinstall -G dba,asmdba,oper oracle
 mkdir -p /u01/app/11.2.0/grid
 mkdir -p /u01/app/grid
@@ -295,4 +295,96 @@ export PATH=/usr/sbin:$PATH
 export PATH=$ORACLE_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$ORACLE_HOME/lib:/lib:/usr/lib
 使配置文件生效：source .bash_profile
+
+配置oracle用户ssh互信
+rac1:
+su - oracle
+ssh-keygen -t rsa
+ssh-keygen -t dsa
+cd ~/.ssh
+ssh rac1 cat ~/.ssh/id_rsa.pub >> authorized_keys
+ssh rac2 cat ~/.ssh/id_rsa.pub >> authorized_keys
+ssh rac1 cat ~/.ssh/id_dsa.pub >> authorized_keys
+ssh rac2 cat ~/.ssh/id_dsa.pub >> authorized_keys
+scp authorized_keys rac2:~/.ssh/
+chmod 600 authorized_keys
+rac1 rac2:
+ssh rac1 date
+ssh rac2 date
+ssh rac1-priv date
+ssh rac2-priv date
+
+配置裸盘
+使用asm管理存储需要裸盘，前面配置了共享硬盘到两台主机上。配置裸盘的方式有两种：
+（1）、/etc/udev/rules.d/60-raw.rules配置文件添加(字符方式帮绑定udev)
+（2）、touch /usr/lib/udev/rules.d/99-oracle-asmdevices.rules配置文件脚本方式添加(块方式绑定udev，速度比字符方式快）
+这里采用第二种方式
+这里是rhel7系统的操作，其他系统稍微有点区别，可能是路劲，和文件内容有点区别
+rac1 rac2:
+（1）、生成规则文件
+touch /etc/udev/rules.d/99-oracle-asmdevices.rules
+或者
+touch /usr/lib/udev/rules.d/99-oracle-asmdevices.rules
+（2）、生成规则
+一般我都不进行分区
+没有对sdb进行分区,执行如下shell脚本，
+for i in b c d e f ;
+do
+echo "KERNEL==\"sd*\", SUBSYSTEM==\"block\", PROGRAM==\"/usr/lib/udev/scsi_id --whitelisted --replace-whitespace --device=/dev/\$name\", RESULT==\"`/usr/lib/udev/scsi_id --whitelisted --replace-whitespace --device=/dev/sd$i`\", SYMLINK+=\"asm-disk$i\", OWNER=\"grid\", GROUP=\"asmadmin\", MODE=\"0660\""
+done
+对sdb 进行了分区，执行如下shell脚本，
+for i in b1 c1 d1 e1 f1:
+do
+echo "KERNEL==\"sd$i\", SUBSYSTEM==\"block\", PROGRAM==\"/usr/lib/udev/scsi_id --whitelisted --replace-whitespace --device=/dev/\$parent\", RESULT==\"`/usr/lib/udev/scsi_id --whitelisted --replace-whitespace --device=/dev/sd${i:0:1}`\", SYMLINK+=\"asm-disk$i\", OWNER=\"grid\", GROUP=\"asmadmin\", MODE=\"0660\""
+done;
+参数注意 未分区用 $name
+         分区用   $parent
+（3）、将结果复制到 99-oracle-asmdevices.rules
+将第二步的输出粘贴入 99-oracle-asmdevices.rules 这个文件
+KERNEL=="sd*", SUBSYSTEM=="block", PROGRAM=="/usr/lib/udev/scsi_id --whitelisted --replace-whitespace --device=/dev/$name", RESULT=="36000c2948ef9d9e4a7937bfc65888bc8", NAME="asm-diskb", OWNER="grid", GROUP="asmadmin", MODE="0660"
+（4）、用udevadm进行测试，注意udevadm命令不接受/dev/sdc这样的挂载设备名，必须是使用/sys/block/sdb这样的原始设备名。
+udevadm test /sys/block/sdb
+udevadm info --query=all --path=/sys/block/sdb
+udevadm info --query=all --name=asm-diskb
+（5）、启动udev
+/usr/sbin/udevadm control --reload-rules
+systemctl status systemd-udevd.service
+systemctl enable systemd-udevd.service
+start_udev 也整合到
+systemctl restart systemd-udev-trigger.service
+（6）、检查设备是否正确绑定
+ls -l /dev/asm* /dev/sdb
+配置grid用户ssh互信
+rac1:
+su - grid
+ssh-keygen -t rsa
+ssh-keygen -t dsa
+rac2:
+su -grid
+ssh-keygen -t rsa
+ssh-keygen -t dsa
+cd ~/.ssh
+rac1:
+ssh rac1 cat ~/.ssh/id_rsa.pub >> authorized_keys
+ssh rac2 cat ~/.ssh/id_rsa.pub >> authorized_keys
+ssh rac1 cat ~/.ssh/id_dsa.pub >> authorized_keys
+ssh rac2 cat ~/.ssh/id_dsa.pub >> authorized_keys
+scp authorized_keys rac2:~/.ssh/
+chmod 600 authorized_keys
+
+正式安装前：要安装一个cvuqdisk包
+在Oracle RAC两个节点上安装cvuqdisk，否则，集群验证使用程序就无法发现共享磁盘，当运行（手动运行或在Oracle Grid Infrastructure安装结束时自动运行）集群验证使用程序，会报错“Package cvuqdisk not installed”
+注意使用适用于硬件体系结构（x86_64或i386）的cvuqdisk RPM。
+cvuqdisk RPM在grid的安装介质上的rpm目录中。
+
+配合yum和rpm -ivh packagename --nodeps --force安装依赖包
+启动安装的时候在直接grid用户登录图形接卖弄启动，避免从root切换需要设置xhost+
+
+-----------------------------------------------------
+关于安装rac时的一些总结：
+磁盘一定要共享到两台虚拟机节点都能df -h看到，不然最后执行root.sh会报错，节点就不能在线，如果不是虚拟机，可以用nfs进行磁盘共享
+ntp要配置，不配置检查的时候会failed，但不影响安装
+dns不配置也会检查报failed，但是不影响安装
+oracle11g执行root.sh的时候有bug会报错，不过解决办法很简单：
+一般root.sh执行到Adding daemon to inittab时卡住，这时候就新开一个终端窗口，执行下面的命令：/bin/dd if=/var/tmp/.oracle/npohasd of=/dev/null bs=1024 count=1,npohasd是root.sh执行生成的文件，如果报错说没有这个文件或路径，则继续执行这个命令。知道能执行为止。注意：重新执行root.sh之前记得删除配置：/u01/app/11.2.0/grid/crs/install/roothas.pl -deconfig -force -verbose
 
