@@ -15,3 +15,601 @@ autoextented on
 next 50m maxsize 20480m
 extent management local;
 
+3、创建用户并制定表空间
+create user username identified by password
+default tablespace user_data
+temporary tablespace user_temp;
+
+4|给用户授权
+grant connect,resource,dba to username;
+
+5、truncate delete drop
+（1）、truncate和delete只删除数据不删除表的结构（定义）
+drop语句将删除表的结构被依赖的约束（constrain），触发器（trigger），索引（index），依赖于该表的存储过程、函数将保留 ，但是变为invalid状态
+（2）、delete语句是dml，这个操作会放到rollback segement中，事务提交后才生效，
+如果有相应的grigger，执行的时候将被触发，truncate，drop是ddl，操作立即生效，
+原数据不放到rollback segement中，不能回滚，操作不触发trigger
+（3）、delete语句不影响表所占用的extent
+
+6、oracle创建触发器和序列（id自增）
+（1）、创建表example：
+create table example(
+    id number(4) not null primary key,
+    name varchar(25),
+    phone varchar(15),
+    address varchar(50)
+);
+（2）、创建序列sql_example：
+create sequence seq_example
+    increment by 1   --每次加几个
+    startwith 1   --从1开始计数
+    nomaxvalue   --不设置最大值
+    nocycle   --一直累加，不循环
+    cache10;
+（3）、创建触发器tri_example：
+create trigger tri_example before insert
+on example for each row when (new.id is null)
+begin
+    select seq_example.nextval into: example.id from dual;
+end;
+（4）、像MSSQL中一样插入数据（不需要加ID的哦，因为触发器已经帮你完成了~）
+insert into example (name,phone,address) values('admin','admin','Heibei');
+
+7、触发器和序列
+/*自增序列，GOODS_GOODS_ID   GOODS_GOODS_ID,Nextval*/
+create sequence GOODS_GOODS_ID
+minvalue 1
+maxvalue 999999999999999999
+start with 1
+increment by 1
+nocache;
+
+/*触发器，实现插入数据时，Goods表的Goods_ID字段自增*/
+create or replace trigger trigger_goods_insert
+    before insert on GOODS
+    for each row
+declare
+    -- local variable here
+begin
+    --column "Good_ID" uses sequence GOODS_GOODS_ID
+    select GOODS_GOODS_ID.nextval into :new.Goods_ID from dual;
+end trigger_goods_insert;
+
+insert into Goods(name) values ('农夫烤鸡');
+8、tar结合crontab实现定时增量备份
+/*第一次手动进行全备份呢，生成snapshot时间戳文件，后main写增量备份脚本*/
+vi backup_incremental.sh
+#!/bin/bash
+DATE=`date +%Y%m%d%H%M%S`
+/bin/tar -g /opt/tsh/ -zcf /opt/backup_incremental_$DATE.tar.gz /opt/tsh/testtar
+/*完整备份，tar -g snapshot -zcf backup_full.tar.gz /opt/tsh/testtar*/
+
+9、触发器
+10、Oracle Job定时任务的使用详解
+oracle中的job能为你做的就是在你规定的时间格式里执行存储过程，定时执行一个任务。下面，定时每15分钟向表插入一条数据
+（1）、创建一张测试表
+--create table
+create table a8
+(
+  a1 VARCHAR2(500)
+)
+tablespace COLLEGEINFO
+  pctfree 10
+  initrans 1
+  maxtrans 255
+  storage
+  (
+  initial 64K
+  next 1M
+  minextents 1
+  maxextents unlimited
+  );
+（2）、创建存储过程，实现像测试表插入数据
+create or replace procedure proc_add_test as 
+begin
+    insert into a8 values (to_char(sysdate, 'yyyy-mm-dd hh:mi'));/*像测试表插入数据*/
+    commit;
+end;
+（3）、创建job定时任务，实现自动调用存储过程（当前时间17:03）
+declare
+    job number;
+BEGIN
+    DBMS_JOB.SUBMIT(
+        JOB => job,   /*自动生产JOB_ID*/
+	WHAT => 'proc_add_test;',   /*需要执行的存储过程名称或sql语句*/
+	NEXT_DATE => sysdate+3/(24*60),   /*初次执行时间-下一个3分钟*/
+	INTERVAL => 'trunc(sysdate,'mi')+1/(24*60)'   /*每隔1分钟执行一次*/
+	);
+    commit;
+end;
+（4）、通过查询系统表该job信息
+SELECT * FROM USER_JOBS;
+（5）、手动调用job（直接调用job可以忽略开始时间）
+BEGIN
+    DBMS_JOB.RUN(40);   /*40 jobde id*/
+END;
+（6）、停止、删除job
+DBMS.BROKEN(JOB,BROKEN,NEXTDATE);
+DBMS_JOB.BROKEN(V_JOB,TRUE,NEXT_DATE);   /*停止一个job，里卖弄的参数true也可以是false，next_date（某一时刻停止）也可以是sysdate（立刻停止）。*/
+（7）、修改间隔时间，修改下次执行时间，修改要执行的操作
+DBMS_JOB.INTERVAL(JOB,INTERVAL);
+DBMS_JOB.NEXT_DATE(JOB,NEXT_DATE);
+DBMS_JOB.WHAT(JOBNO,'SP_FACT_CHARGE_CODE;');   --修改某个job名
+
+10、Oracle创建DBlink方法
+当用户要跨本地数据库，访问另一个数据库中的表数据时，本地数据库中必须创建了远程数据库的的blink
+
+11、创建物化视图
+create materialized view SEC_BL_ASSETS.MV_REPORT_SJ1
+refresh force on demand
+as
+select *
+    from v_report_sj1;
+
+12、创建存储过程
+SYNC_FROM_CHECK_TO_ASSETS:
+CREATE OR REPLACE PROCEDURE SEC_ASSETS.SYNC_FROM_CHECK_TO_ASSETS(prmMsg out varchar2) is
+ num number;
+ num2 number;
+begin
+  num := 0;
+  num2 := 0;
+  for e in(SELECT assets_code,BASE_ROOM_ID_NEW,
+                 BASE_ROOM_NAME_NEW,
+                 BASE_TEACHER_NO_NEW,
+                 CHECK_RESULT,
+                 USE_STATE,
+                 SYSDATE check_data
+            FROM SEC_ASSETS.ASSETS_CHECK_LIST ) loop
+
+
+        update sec_bl_assets.assets a set a.base_room_id = nvl(e.BASE_ROOM_ID_NEW,a.base_room_id),a.base_teacher_no_keeper=nvl(e.BASE_TEACHER_NO_NEW,a.base_teacher_no_keeper),
+        a.base_room_name = nvl(e.BASE_ROOM_NAME_NEW,a.base_room_name),a.check_result = nvl(e.CHECK_RESULT,a.check_result),a.check_use_state = NVL(e.use_state,a.check_use_state),a.last_check_date=e.check_data
+        where a.code = e.assets_code;
+        num := num + 1;
+   end loop;
+  /* commit;*/
+  /* for d in (select acl.id,act.id as task_id,act2.id as task_new_id from sec_assets_update.assets_check_list acl
+            left join sec_bl_assets_update.assets a on acl.assets_code = a.code
+            left join sec_assets_update.assets_check_task act on acl.assets_check_task_id = act.id
+            left join sec_assets_update.assets_check_task act2 on act2.base_dep_code = a.base_dep_code
+            where act.id != act2.id) loop
+          update sec_assets_update.assets_check_list set assets_check_task_id = d.task_new_id
+          where id = d.id;
+          num2 := num2 + 1;
+   end loop;
+   commit;*/
+   prmMsg := '成功更新'||num||'条资产数据,更新'||num2||'条清查数据。';
+end SYNC_FROM_CHECK_TO_ASSETS;
+
+
+
+snapshot_assets:
+CREATE OR REPLACE PROCEDURE SEC_ASSETS.SNAPSHOT_ASSETS is
+  snapshoted      number;
+  isrunning       number;
+  prmSnapshotDate date;
+  strSnapshotDate varchar2(32);
+  shortDate       varchar2(32);
+  prmResult       number;
+  prmMsg          varchar2(4000);
+  oracle_version  number;
+  haspart         number;
+  max_date        varchar2(16);
+begin
+  prmSnapshotDate := to_date(to_char(sysdate, 'yyyy/mm/dd'), 'yyyy/mm/dd');
+  strSnapshotDate := to_char(prmSnapshotDate + 1, 'yyyy-mm-dd HH24:MI:SS');
+  shortDate       := to_char(prmSnapshotDate + 1, 'yymmdd');
+  --oracle版本
+  select to_number(substr(version, 1, instr(version, '.', 1) - 1))
+    into oracle_version
+    from PRODUCT_COMPONENT_VERSION t
+   where UPPER(product) like '%ORACLE%';
+
+  --清除1小时前非正常结束的存储过程
+  delete from ASSETS_SNAPSHOT_LOG
+   where prmresult = -1
+     and snapshot_time < prmSnapshotDate - 1 / 24;
+  commit;
+
+  --检查是否存在正在执行的存储过程
+  select count(1)
+    into isrunning
+    from ASSETS_SNAPSHOT_LOG
+   where prmresult = -1;
+
+  if isrunning > 0 then
+    prmResult := 0;
+    prmMsg    := '正在执行快照，请稍候再试!';
+    insert into ASSETS_SNAPSHOT_LOG
+      (snapshot_time, prmresult, prmmsg)
+    values
+      (prmSnapshotDate, prmResult, prmMsg);
+    commit;
+    return;
+  end if;
+
+  --记录日志
+  insert into ASSETS_SNAPSHOT_LOG
+    (snapshot_time, prmresult, prmmsg)
+  values
+    (prmSnapshotDate, -1, '');
+  commit;
+
+  --判断当前是否有快照数据
+  select count(1)
+    into snapshoted
+    from assets_snapshot
+   where to_char(snapshot_date, 'yyyy-mm-dd') =
+         to_char(prmSnapshotDate, 'yyyy-mm-dd')
+     and rownum = 1;
+
+  --如果有则删除数据
+  if snapshoted = 1 then
+    delete from assets_snapshot nologging
+     where to_char(snapshot_date, 'yyyy-mm-dd') =
+           to_char(prmSnapshotDate, 'yyyy-mm-dd');
+    delete from assets_snapshot_index
+     where to_char(snapshot_date, 'yyyy-mm-dd') =
+           to_char(prmSnapshotDate, 'yyyy-mm-dd');
+  end if;
+
+  --查新分区是否存在
+  select count(1)
+    into haspart
+    from user_tab_partitions
+   where table_name = 'ASSETS_SNAPSHOT'
+     and partition_name = 'P_' || shortDate;
+
+  -- 如果oracle版本低于11g则手动插入分区
+
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx4');
+  if oracle_version < 15 then
+  
+    select to_char(max(snapshot_date), 'yymmdd')
+      into max_date
+      from ASSETS_snapshot_index;
+    -- 是否已经有分区
+    if haspart = 0 and (max_date is null or max_date < shortDate) then
+      execute immediate 'ALTER TABLE ASSETS_SNAPSHOT
+            add partition P_' || shortDate ||
+                        ' values less than(to_date(''' || strSnapshotDate ||
+                        ''',''yyyy-mm-dd HH24:MI:SS''))
+                    tablespace COLLEGEINFO';
+    end if;
+  end if;
+
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx5');
+  --插入数据
+  insert into assets_snapshot
+    (snapshot_date,
+     code,
+     name,
+     assets_code_parent,
+     assets_sort_code,
+     source,
+     base_dep_code,
+     direction,
+     base_teacher_no_keeper,
+     price,
+     outlay_subject,
+     stock_date,
+     state,
+     attach_num,
+     attach_price,
+     assets_sort_name,
+     belong,
+     type,
+     sub_type,
+     furniture_batch_code,
+     dispdate,
+     stock_price,
+     is_car,
+     jingz,
+     leijzj,
+     book_price,
+     book_num,
+     book_types,
+     drop_bpm_no,
+     drop_attach_num,
+     drop_attach_price,
+     assets_sort_gb_code,
+     assets_sort_gb_name,
+     assets_sort_gb_old_code,
+     assets_sort_gb_old_name,
+     caizxjfly,
+     qitjfly,
+     num,
+     REQUEST_BPM_NO,
+     gz_category)
+    select prmSnapshotDate,
+           code,
+           name,
+           assets_code_parent,
+           assets_sort_code,
+           source,
+           base_dep_code,
+           direction,
+           base_teacher_no_keeper,
+           price,
+           outlay_subject,
+           stock_date,
+           state,
+           attach_num,
+           attach_price,
+           assets_sort_name,
+           belong,
+           type,
+           sub_type,
+           furniture_batch_code,
+           dispdate,
+           stock_price,
+           is_car,
+           jingz,
+           leijzj,
+           book_price,
+           book_num,
+           book_types,
+           drop_bpm_no,
+           drop_attach_num,
+           drop_attach_price,
+           assets_sort_gb_code,
+           assets_sort_gb_name,
+           assets_sort_gb_old_code,
+           assets_sort_gb_old_name,
+           caizxjfly,
+           qitjfly,
+           num,
+           REQUEST_BPM_NO,
+           gz_category
+      from sec_bl_assets.assets;
+
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx6');
+
+  --插入统计数据
+  insert into assets_snapshot_index
+    (snapshot_date, total_num, total_price, in_stock_num, in_stock_price)
+    select prmSnapshotDate,
+           sum(case
+                 when assets_code_parent is null then
+                  1
+                 else
+                  0
+               end) as total_num,
+           nvl(sum(nvl(price, 0)), 0) as total_price,
+           sum(case
+                 when state > 0 and assets_code_parent is null then
+                  1
+                 else
+                  0
+               end) as in_stock_num,
+           sum(case
+                 when state > 0 then
+                  nvl(price, 0)
+                 else
+                  0
+               end) as in_stock_price
+      from assets_snapshot
+     where snapshot_date = prmSnapshotDate;
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx7');
+  --更新土地房屋面积
+  update assets_snapshot a
+     set (TUDMJ,
+          JIANZMJ,
+          ZIYMJ,
+          CHUJMJ,
+          CHUZMJ,
+          QITMJ,
+          SHIYMJ,
+          DIAXMJ,
+          HUIYSMJ,
+          CHEKMJ,
+          SHITMJ,
+          PEIDSMJ,
+          JIFMJ,
+          BANGSMJ,
+          ZIYJZ,
+          CHUJJZ,
+          CHUZJZ,
+          QITJZ,
+          dixmj,
+          fentmj,
+          duymj,
+          duiwtzjz,
+          duiwtzmj,
+          tudsyqlx) =
+         (select TUDMJ,
+                 JIANZMJ,
+                 ZIYMJ,
+                 CHUJMJ,
+                 CHUZMJ,
+                 QITMJ,
+                 SHIYMJ,
+                 DIAXMJ,
+                 HUIYSMJ,
+                 CHEKMJ,
+                 SHITMJ,
+                 PEIDSMJ,
+                 JIFMJ,
+                 BANGSMJ,
+                 ZIYJZ,
+                 CHUJJZ,
+                 CHUZJZ,
+                 QITJZ,
+                 dixmj,
+                 fentmj,
+                 duymj,
+                 duiwtzjz,
+                 duiwtzmj,
+                 tudsyqlx
+            from sec_bl_assets.assets_house
+           where code = a.code)
+   where a.code in (select code from sec_bl_assets.assets_house)
+    AND SNAPSHOT_DATE = PRMSNAPSHOTDATE;
+  --提交
+  prmResult := 1;
+  --记录日志
+  update assets_snapshot_log
+     set prmresult = 1, prmmsg = ''
+   where to_char(snapshot_time, 'yyyy-MM-dd') =
+         to_char(prmSnapshotDate, 'yyyy-MM-dd');
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx9');
+  commit;
+
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx10' || prmresult);
+  return;
+exception
+  when others then
+    rollback;
+    prmResult := 0;
+    prmMsg    := SQLERRM;
+    DBMS_OUTPUT.PUT_LINE(prmMsg);
+    --记录日志
+    update assets_snapshot_log
+       set prmresult = 0, prmmsg = prmMsg
+     where to_char(snapshot_time, 'yyyy-MM-dd') =
+           to_char(prmSnapshotDate, 'yyyy-MM-dd');
+    commit;
+    return;
+end snapshot_assets;
+
+
+
+SYNC_HIT_BASE_TEACHER:
+CREATE OR REPLACE PROCEDURE SYNC_HIT_BASE_TEACHER IS
+BEGIN
+
+  --新增教师信息
+  INSERT INTO BASE_TEACHER
+    (NO,
+     NAME,
+     GENDER,
+     ID_NO,
+     BASE_DEP_CODE,
+     STATE,
+     WORKING,
+     PASSWORD,
+     MOBILE)
+    SELECT JB.ZGH NO,
+           JB.XM NAME,
+           NVL(JB.XBM, 0) GENDER,
+           SFZHM ID_NO,
+           SZDWM BASE_DEP_CODE,
+           '1' STATE,
+           '101' WORKING,
+           CASE
+             WHEN LENGTH(SFZHM) = 18 THEN
+              MD5(SUBSTR(SFZHM, -6))
+             ELSE
+              MD5(JB.ZGH || '_hit')
+           END PASSWORD,
+           YDDH MOBILE --, DZXX
+      FROM HIT_DBA.JZG_ZBRYJBXX034@HIT_NIC ZBRY --在编人员基本信息
+      LEFT JOIN HIT_DBA.JZG_JBXX034@HIT_NIC JB
+        ON ZBRY.ZGH = JB.ZGH --关联人员基本信息
+      LEFT JOIN HIT_DBA.JZG_GRTX034@HIT_NIC GRTX
+        ON ZBRY.ZGH = GRTX.ZGH --关联手机信息
+      LEFT JOIN HIT_DMB.BZDM_XB@HIT_NIC XB
+        ON JB.XBM = XB.DM --关联性别
+      LEFT JOIN HIT_DMB.XJDM_ZZJG@HIT_NIC ZZJG
+        ON JB.SZDWM = ZZJG.DM
+     WHERE ZBRY.ZGH NOT IN (SELECT NO FROM BASE_TEACHER)
+       AND JB.SZDWM IN (SELECT CODE FROM BASE_DEP)
+       AND JB.ZBRYZT = '01';
+
+  --更新输入码
+  UPDATE BASE_TEACHER
+     SET INPUT_CODE = NO || '|' || NAME || '|' || GET_PINYIN(NAME) || '|' ||
+                      UPPER(GETHZPY.GETHZFULLPY(NAME))
+                      where input_code is null;
+
+  COMMIT;
+
+EXCEPTION
+  WHEN OTHERS THEN
+    ROLLBACK;
+    RETURN;
+END SYNC_HIT_BASE_TEACHER;
+
+12、创建job
+begin
+  sys.dbms_job.submit(job => :job,
+                      what => 'SYNC_HIT_BASE_TEACHER;',
+                      next_date => to_date('16-10-2018 17:24:05', 'dd-mm-yyyy hh24:mi:ss'),
+                      interval => 'sysdate+1');
+  commit;
+end;
+/
+
+13、分区表详解
+创建用户并授权
+CREATE USER SCOTT IDENTIFIED BY "scott"
+DEFAULT TABLESPACE USERS
+TEMPORARY TABLESPACE TEMP;
+GRANT SELECT,CREATE,RESOURCE,CONNECT ON SCOTT.*@ASSETS TO SCOTT;
+
+创建测试表
+-- Create table
+create table SCOTT.TEST6
+(
+  id       NUMBER(10) not null primary key,
+  name     VARCHAR2(20) not null,
+  sal      NUMBER(7,2),
+  reward   NUMBER(7,2),
+  job      VARCHAR2(20),
+  phone    VARCHAR2(20) not null unique,
+  country  VARCHAR2(20),
+  province VARCHAR2(20),
+  city     VARCHAR2(20),
+  age      NUMBER(7),
+  hiredate DATE not null
+)
+tablespace USERS;
+-- Add comments to the table
+comment on table SCOTT.TEST6
+  is '测试表类似emp表';
+-- Add comments to the columns
+comment on column SCOTT.TEST6.id
+  is 'ID号，主键，唯一约束';
+comment on column SCOTT.TEST6.name
+  is '员工名字';
+comment on column SCOTT.TEST6.sal
+  is '员工薪水';
+comment on column SCOTT.TEST6.reward
+  is '员工奖金';
+comment on column SCOTT.TEST6.job
+  is '员工工作岗位';
+comment on column SCOTT.TEST6.phone
+  is '手机号码';
+comment on column SCOTT.TEST6.country
+  is '国籍';
+comment on column SCOTT.TEST6.province
+  is '省份';
+comment on column SCOTT.TEST6.city
+  is '城市';
+comment on column SCOTT.TEST6.age
+  is '年龄';
+
+insert into scott.test6(id,name,phone,hiredate) values(1,'dd','12343435678',sysdate);
+
+14、数据库的体系结构
+实例是由内存和后台进程组成，实例是访问数据库的方法，初始化参数控制实例的行为，一个实例只能连接一个数据库，启动实例不需要数据库，产品安装好有初始化参数文件就可以启动实例。
+查看SGA
+conn /as sysdba
+select * from v$sga;
+show sga
+查看当前后台进程
+SELECT NAME,DESCRIPTION FROM V$BGPROCESS WHERE PADDR<>'00';
+数据库的最高账号sys操作系统认证模式
+因为数据库在OS上，，所以能进入oracle账号就能进入到数据库最高账号
+sqlplus /nolog
+conn /as sysdba
+show user
+sqlplus "/as sysdba"
+
+重建数据库密码文件
+（1）、确定实例名，（2）、确定密码文件的路径和名称，（3）、停止数据库，删除老的密码文件，（4）、在擦欧总系统下运行命令
+select instance_name from v$instance;
+ll /oracle/product/11.2.0/db_1/dbs/
+orapwd file=/oracle/product/11.2.0/db_1/dbs/orapwsid password=oracle
+conn sys/oracle as sysdba
