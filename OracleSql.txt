@@ -531,6 +531,870 @@ EXCEPTION
     RETURN;
 END SYNC_HIT_BASE_TEACHER;
 
+
+
+WORK_DEP:
+CREATE OR REPLACE PROCEDURE work_dep IS
+
+BEGIN
+--初始化建账权限
+  FOR TEACHER IN (SELECT BASE_DEP_CODE, NO
+                    FROM BASE_TEACHER
+                   WHERE STATE = 1
+                     AND WORKING = '101') LOOP
+    INSERT INTO SEC_ASSETS.ASSETS_DEP
+      SELECT T.CODE, T.NO
+        FROM (SELECT TEACHER.NO, CODE
+                FROM BASE_DEP
+               START WITH CODE = TEACHER.BASE_DEP_CODE
+              CONNECT BY PRIOR CODE = BASE_DEP_CODE_PARENT) T
+        LEFT JOIN SEC_ASSETS.ASSETS_DEP ED
+          ON T.NO = ED.BASE_TEACHER_NO
+         AND T.CODE = ED.BASE_DEP_CODE
+       WHERE ED.BASE_TEACHER_NO IS NULL;
+  END LOOP;
+
+  COMMIT;
+
+  RETURN;
+EXCEPTION
+  WHEN OTHERS THEN
+    ROLLBACK;
+    RETURN;
+END work_dep;
+
+
+ORRECT_WRONGS:
+create or replace procedure sec_assets.correct_wrongs(dataTime  in varchar2,
+                                                            userName  in varchar2,                                  
+                                                            prmResult out number,
+                                                            prmMsg    out varchar2) is
+
+  zl_gljz       number; --自用价值+出租价值+对外投资价值+出借价值+其他价值！=价值
+  zl_ft_dy      number; --分摊面积+独用面积！=面积
+  zl_czzj_fczzj number; --财政性资金+非财政性资金！=价值
+  zl_fwglmj     number; --房屋自用面积+出租面积+对外投资面积+出借面积+其他面积！=建筑面积
+  zl_jzxy0      number; --价值小于等于0
+  zl_jzw0       number; --土地房屋构筑物价值不能为0
+  zl_tdglmj     number; --土地自用面积+出租面积+对外投资面积+出借面积+其他面积!=土地面积
+begin
+  --初始参数
+  execute immediate ('select is_open 
+   from sec_assets_jybjk.jybjk_check_error_config_' ||
+                    userName || ' where code =''zl_gljz''')
+    into zl_gljz;
+  execute immediate ('select is_open 
+   from sec_assets_jybjk.jybjk_check_error_config_' ||
+                    userName || ' where code =''zl_ft_dy''')
+    into zl_ft_dy;
+  execute immediate (' select is_open 
+  from sec_assets_jybjk.jybjk_check_error_config_' ||
+                    userName || ' where code =''zl_czzj_fczzj''')
+    into zl_czzj_fczzj;
+  execute immediate (' select is_open 
+  from sec_assets_jybjk.jybjk_check_error_config_' ||
+                    userName || ' where code =''zl_fwglmj''')
+    into zl_fwglmj;
+  execute immediate (' select is_open 
+  from sec_assets_jybjk.jybjk_check_error_config_' ||
+                    userName || ' where code =''zl_jzxy0''')
+    into zl_jzxy0;
+  execute immediate (' select is_open 
+  from sec_assets_jybjk.jybjk_check_error_config_' ||
+                    userName || ' where code =''zl_jzw0''')
+    into zl_jzw0;
+  execute immediate (' select is_open 
+  from sec_assets_jybjk.jybjk_check_error_config_' ||
+                    userName || ' where code =''zl_tdglmj''')
+    into zl_tdglmj;
+
+  --有价值但价值小于等于0的，价值类型调为04
+  if zl_jzxy0 = 1 then
+    execute immediate (' update sec_bl_assets_jybjk.assets_' || userName || ' e
+     set e.jiazlx = ''04''
+   where nvl(e.JIAZLX, ''01'') != ''04''
+     and e.price + nvl(e.attach_price, 0) <= 0 ');
+  end if;
+
+  -- 房屋土地价值不能为0 改为1
+  if zl_jzw0 = 1 then
+    execute immediate ('update sec_assets_jybjk.assets_snapshot_' ||
+                      userName || ' e
+       set e.price = 1, e.attach_price = 0
+     where to_date('''|| dataTime||''',''yyyy-mm-dd'')=e.snapshot_date
+       and nvl(price + nvl(e.attach_price, 0), 0) = 0
+       and (e.assets_sort_gb_code like ''101%'' or e.assets_sort_gb_code like ''102%'' or e.assets_sort_gb_code like ''103%'')');
+  end if;
+
+  if zl_tdglmj = 1 then
+    --土地自用面积+出租面积+对外投资面积+出借面积+其他面积！=面积 （面积算在自用面积上）
+    execute immediate (' update sec_assets_jybjk.assets_snapshot_' ||
+                      userName || ' e
+     set e.ziymj = nvl(nvl(e.TUDMJ, e.JIANZMJ), 0) -
+                   (nvl(e.qitmj, 0) + nvl(e.chuzmj, 0) + nvl(e.duiwtzmj, 0) +
+                    nvl(e.chujmj, 0))
+   where to_date(''' || dataTime ||
+                      ''',''yyyy-mm-dd'')=e.snapshot_date  and nvl(e.ziymj, 0) + nvl(e.chuzmj, 0) + nvl(e.duiwtzmj, 0) +
+         nvl(e.chujmj, 0) + nvl(e.qitmj, 0) !=
+         nvl(nvl(e.TUDMJ, e.JIANZMJ), 0)
+     and e.assets_sort_gb_code like ''101%'' ');
+  end if;
+  --房屋自用面积+出租面积+对外投资面积+出借面积+其他面积！=面积 （面积算在自用面积上）
+  if zl_fwglmj = 1 then
+    execute immediate ('update sec_assets_jybjk.assets_snapshot_' ||
+                      userName || ' e
+     set e.ziymj = nvl(nvl(e.JIANZMJ, e.TUDMJ), 0) -
+                   (nvl(e.qitmj, 0) + nvl(e.chuzmj, 0) + nvl(e.duiwtzmj, 0) +
+                    nvl(e.chujmj, 0))
+   where to_date(''' || dataTime ||
+                      ''',''yyyy-mm-dd'')=e.snapshot_date
+     and nvl(e.ziymj, 0) + nvl(e.chuzmj, 0) + nvl(e.duiwtzmj, 0) +
+         nvl(e.chujmj, 0) + nvl(e.qitmj, 0) !=
+         nvl(nvl(e.JIANZMJ, e.TUDMJ), 0)
+     and e.assets_sort_gb_code like ''102%'' ');
+  end if;
+  --自用价值+出租价值+对外投资价值+出借价值+其他价值！=价值 (价值记在自用价值上)
+  if zl_gljz = 1 then
+    execute immediate (' update sec_assets_jybjk.assets_snapshot_' ||
+                      userName || ' e
+     set e.ziyjz =
+         (price + nvl(e.attach_price, 0)) -
+         (nvl(e.qitjz, 0) + nvl(e.chuzjz, 0) + nvl(e.duiwtzjz, 0) +
+         nvl(e.chujjz, 0))
+   where to_date(''' || dataTime ||
+                      ''',''yyyy-mm-dd'')=e.snapshot_date
+     and nvl(e.ziyjz, 0) + nvl(e.chuzjz, 0) + nvl(e.duiwtzjz, 0) +
+         nvl(e.chujjz, 0) + nvl(e.qitjz, 0) !=
+         (price + nvl(e.attach_price, 0))
+     and (e.assets_sort_gb_code like ''101%'' or e.assets_sort_gb_code like ''102%'' or e.assets_sort_gb_code like ''103%'') ');
+  end if;
+  --土地使用权类型纠错
+  execute immediate (' UPDATE sec_assets_jybjk.assets_snapshot_' ||
+                    userName || '  E
+     SET TUDSYQLX = CASE
+                      WHEN E.PRICE + NVL(E.ATTACH_PRICE, 0) > 0 THEN
+                       ''01''
+                      ELSE
+                       ''02''
+                    END
+   WHERE to_date(''' || dataTime ||
+                    ''',''yyyy-mm-dd'')=e.snapshot_date
+     AND e.assets_sort_gb_code LIKE ''101%'' ');
+
+  --分摊面积+独用面积不等于面积纠错（记在独用面积上）
+  if zl_ft_dy = 1 then
+    execute immediate (' UPDATE sec_assets_jybjk.assets_snapshot_' ||
+                      userName || '  E
+     SET e.DUYMJ = NVL(NVL(E.JIANZMJ, E.TUDMJ), 0) - NVL(E.FENTMJ, 0)
+   WHERE to_date(''' || dataTime ||
+                      ''',''yyyy-mm-dd'')=e.snapshot_date
+     AND e.assets_sort_gb_code LIKE ''101%''
+     AND NVL(E.FENTMJ, 0) + NVL(E.DUYMJ, 0) !=
+         NVL(NVL(E.JIANZMJ, E.TUDMJ), 0) ');
+  end if;
+
+  --财政性资金+非财政性资金！=价值 (记在财政性资金上)
+  if zl_czzj_fczzj = 1 then
+    execute immediate (' update sec_assets_jybjk.assets_snapshot_' ||
+                      userName || '  E
+     set e.CAIZXJFLY = nvl(e.attach_price, 0) + price - nvl(QITJFLY, 0)
+   where to_date(''' || dataTime ||
+                      ''',''yyyy-mm-dd'')=e.snapshot_date
+     and nvl(e.CAIZXJFLY, 0) + nvl(QITJFLY, 0) != nvl(e.attach_price, 0) + price ');
+  end if;
+  commit;
+  prmResult := 1;
+  prmMsg    := 'OK';
+  return;
+exception
+  when others then
+    rollback;
+    prmResult := 0;
+    prmMsg    := '上报库数据生成失败！' || SQLERRM;
+    return;
+end correct_wrongs;
+
+
+
+SEC_ASSETS.GENERATE_GGJREPORT_ZZ_DATA:
+CREATE OR REPLACE PROCEDURE SEC_ASSETS.GENERATE_GGJREPORT_ZZ_DATA(BDATA in varchar2,EDATA in varchar2,
+                                                 prmResult out varchar2,
+                                                 prmMsg    out varchar2) is
+     v_sql varchar2(4000);
+     cou number;
+     partitionb varchar2(128);
+     partitione varchar2(128);
+/**
+生成国管局报表增值数据
+*/
+  begin
+      --初始化分区
+      select get_snapshot_partition_name(to_date(BDATA, 'yyyy-mm-dd')) into partitionb from dual;
+      select get_snapshot_partition_name(to_date(EDATA, 'yyyy-mm-dd')) into partitione from dual;
+      --删除增值数据表
+      select count(*) into cou from user_tables where table_name='ASSETS_GGJREPORT_ZZ_DATA';
+      if cou<>0 then
+          execute immediate 'drop table ASSETS_GGJREPORT_ZZ_DATA purge';
+      end if;
+      v_sql := 'create table ASSETS_GGJREPORT_ZZ_DATA as
+ select  a.type,a.book_num,a.gz_category,
+                a.assets_sort_gb_code,
+                a.assets_sort_gb_name,
+                assets.chanqxs,assets_house.quansxz,assets_house.zuolwz,nvl(a.caizxjfly,0) -nvl(b.caizxjfly,0) as caizxjfly,nvl(a.qitjfly,0)-nvl(b.qitjfly,0) as qitjfly,nvl(a.tudmj,0) - nvl(b.tudmj,0) as tudmj,nvl(a.ziymj,0) -nvl(b.ziymj,0) as ziymj,nvl(a.chujmj,0) - nvl(b.chujmj,0) as chujmj,nvl(a.chuzmj,0) - nvl(b.chuzmj,0) as chuzmj,nvl(a.qitmj,0) - nvl(b.qitmj,0) as qitmj,assets_house.dilyt,
+                nvl(a.jianzmj,0) - nvl(b.jianzmj,0) as jianzmj,nvl(a.bangsmj,0) - nvl(b.bangsmj,0) as bangsmj,nvl(a.huiysmj,0) - nvl(b.huiysmj,0) as huiysmj,nvl(a.chekmj,0) - nvl(b.chekmj,0) as chekmj,nvl(a.shitmj,0) - nvl(b.shitmj,0) as shitmj,nvl(a.peidsmj,0) - nvl(b.peidsmj,0) peidsmj,nvl(a.jifmj,0) - nvl(b.jifmj,0)  as jifmj,nvl(a.dixmj,0) - nvl(b.dixmj,0) dixmj,assets_house.quanszh,assets_house.quanszm,
+                nvl(a.ziyjz,0)-nvl(b.ziyjz,0) as ziyjz,nvl(a.chujjz,0) - nvl(b.chujjz,0) as chujjz,nvl(a.chuzjz,0) - nvl(b.chuzjz,0) as chuzjz,nvl(a.qitjz,0) - nvl(b.qitjz,0) as qitjz,
+                assets.cheph,nvl(assets.paiql,''0'') as paiql,nvl(assets.chejh,''*'') as chejh,assets.yongtfl,nvl(assets.bianzqk,''01'') as bianzqk,assets.chelx,assets.zuows,
+                a.assets_sort_gb_name as gz_name,
+                a.code,
+                a.name,
+                assets.model,
+                (a.price + nvl(a.attach_price, 0)) -
+                (b.price + nvl(b.attach_price, 0)) as price,
+                decode(a.num, '''', 1, 0, 1, a.num) as num,
+                a.source,
+            decode(a.source, ''1'', ''01'', ''2'', ''03'', ''3'', ''01'', ''4'', ''06'', ''6'', ''05'', ''07'') as get_method,
+            nvl(assets.cgzzxs,decode(a.source, ''1'', ''03'', ''3'', ''03'', '''')) as cgzzxs,
+                '''||EDATA||''' as stock_date,
+                to_char(a.stock_date, ''YYYY'') as stock_year,
+                case when a.assets_sort_code like ''0501%'' or a.assets_sort_code like ''0601%'' then
+                  decode(assets.country, ''156'', ''1'', ''2'')
+                else
+                  null
+                end as soft_country,
+                case when a.assets_sort_code like ''0501%'' or a.assets_sort_code like ''0601%'' then
+                  ''6''
+                else
+                  null
+                end as soft_type,
+                case when a.assets_sort_code like ''0501%'' or a.assets_sort_code like ''0601%'' then
+                  ''1''
+                else
+                  null
+                end as soft_true,3 as AUTHORIZE,
+                a.belong,assets.producer,assets.AUTHORIZATION_NUM,assets.AUTHORIZATION_YEAR,case when a.source =''2'' then 0 else a.price + nvl(a.attach_price, 0) end as caizxzj,  case when a.source !=''2'' then 0 else a.price + nvl(a.attach_price, 0) end as feiczxzj
+          from assets_snapshot a
+          left join assets_snapshot b on b.code = a.code
+           and b.type in (select code from sec_bl_assets.assets_type where assets_category in (''fixed_assets'',''intangible_assets''))--固定资产
+           and b.state > 0
+           and b.snapshot_date = to_date('''||BDATA||''', ''yyyy-MM-dd'')
+          left join sec_bl_assets.assets assets on assets.code = a.code
+          left join sec_bl_assets.assets_house assets_house on assets_house.code = a.code
+         where 1 = 1
+           and a.state > 0
+           and a.type in (select code from sec_bl_assets.assets_type where assets_category in(''fixed_assets'',''intangible_assets''))--固定资产
+           and a.snapshot_date = to_date('''||EDATA||''', ''yyyy-MM-dd'')
+           and a.assets_code_parent is null
+           and b.code is not null
+           and (a.price + nvl(a.attach_price, 0)) > (b.price + nvl(b.attach_price, 0))';
+           dbms_output.put_line(v_sql);
+           execute immediate v_sql;
+  commit;
+  prmResult := '1';
+  prmMsg    := '生成成功！';
+  return;
+exception
+  when others then
+    rollback;
+    prmResult := '0';
+    prmMsg    := '生成失败！' || SQLERRM;
+    return;
+end GENERATE_GGJREPORT_ZZ_DATA;
+
+
+
+SEC_ASSETS.INIT_assets_DEP:
+CREATE OR REPLACE PROCEDURE SEC_ASSETS.INIT_assets_DEP(PRMRESULT OUT NUMBER,
+       PRMERROMSG OUT VARCHAR2)
+IS
+BEGIN
+--初始化建账单位
+       --单位及下级单位
+       FOR TEACHER IN (SELECT BASE_DEP_CODE,NO FROM sec_base.BASE_TEACHER) LOOP
+           INSERT INTO assets_DEP
+           SELECT T.CODE,T.NO FROM(
+  SELECT TEACHER.NO, CODE
+    FROM sec_base.BASE_DEP
+   START WITH CODE = TEACHER.BASE_DEP_CODE
+  CONNECT BY PRIOR CODE = BASE_DEP_CODE_PARENT) T
+           LEFT JOIN assets_DEP ED ON T.NO = ED.BASE_TEACHER_NO AND T.CODE = ED.BASE_DEP_CODE
+           WHERE ED.BASE_TEACHER_NO IS NULL;
+
+       END LOOP;
+
+   PRMRESULT := 1;
+   PRMERROMSG := 'success';
+   COMMIT;
+EXCEPTION WHEN OTHERS THEN
+   PRMRESULT := 1;
+   PRMERROMSG := SQLERRM;
+   ROLLBACK;
+
+END INIT_assets_DEP;
+
+
+
+sec_assets.print_proc:
+create or replace procedure sec_assets.print_proc(str in varchar2) is
+/*
+--打印字符串，调试的时候用
+--由于字符串过长，超过了dbms_output.put_line的长度，故采用本程序分行打印出来
+--@auther:Z.X.T
+--@date:2007-6-26
+*/
+
+ v Number;
+ begin
+ v := 1;
+     WHILE v <= LENGTH(str) LOOP
+          DBMS_OUTPUT.PUT_LINE(SUBSTR(str, v, 200));
+          v := v + 200;
+      END LOOP;
+end print_proc;
+
+
+
+SEC_ASSETS.SNAPSHOT_ASSETS:
+CREATE OR REPLACE PROCEDURE SEC_ASSETS.SNAPSHOT_ASSETS is
+  snapshoted      number;
+  isrunning       number;
+  prmSnapshotDate date;
+  strSnapshotDate varchar2(32);
+  shortDate       varchar2(32);
+  prmResult       number;
+  prmMsg          varchar2(4000);
+  oracle_version  number;
+  haspart         number;
+  max_date        varchar2(16);
+begin
+  prmSnapshotDate := to_date(to_char(sysdate, 'yyyy/mm/dd'), 'yyyy/mm/dd');
+  strSnapshotDate := to_char(prmSnapshotDate+1, 'yyyy-mm-dd HH24:MI:SS');
+  shortDate       := to_char(prmSnapshotDate+1, 'yymmdd');
+  --oracle版本
+  select to_number(substr(version, 1, instr(version, '.', 1) - 1))
+    into oracle_version
+    from PRODUCT_COMPONENT_VERSION t
+   where UPPER(product) like '%ORACLE%';
+
+  --清除1小时前非正常结束的存储过程
+  delete from ASSETS_SNAPSHOT_LOG
+   where prmresult = -1
+     and snapshot_time < prmSnapshotDate - 1 / 24;
+  commit;
+
+  --检查是否存在正在执行的存储过程
+  select count(1)
+    into isrunning
+    from ASSETS_SNAPSHOT_LOG
+   where prmresult = -1;
+
+  if isrunning > 0 then
+    prmResult := 0;
+    prmMsg    := '正在执行快照，请稍候再试!';
+    insert into ASSETS_SNAPSHOT_LOG
+      (snapshot_time, prmresult, prmmsg)
+    values
+      (prmSnapshotDate, prmResult, prmMsg);
+    commit;
+    return;
+  end if;
+
+  --记录日志
+  insert into ASSETS_SNAPSHOT_LOG
+    (snapshot_time, prmresult, prmmsg)
+  values
+    (prmSnapshotDate, -1, '');
+  commit;
+
+  --判断当前是否有快照数据
+  select count(1)
+    into snapshoted
+    from assets_snapshot
+   where to_char(snapshot_date, 'yyyy-mm-dd') =
+         to_char(prmSnapshotDate, 'yyyy-mm-dd')
+     and rownum = 1;
+
+  --如果有则删除数据
+  if snapshoted = 1 then
+    delete from assets_snapshot nologging
+     where to_char(snapshot_date, 'yyyy-mm-dd') =
+           to_char(prmSnapshotDate, 'yyyy-mm-dd');
+    delete from assets_snapshot_index
+     where to_char(snapshot_date, 'yyyy-mm-dd') =
+           to_char(prmSnapshotDate, 'yyyy-mm-dd');
+  end if;
+
+  --查新分区是否存在
+  select count(1)
+      into haspart
+      from user_tab_partitions
+     where table_name = 'ASSETS_SNAPSHOT'
+       and partition_name = 'P_' || shortDate;
+
+  -- 如果oracle版本低于11g则手动插入分区
+
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx4');
+  if oracle_version < 15 then
+
+    select to_char(max(snapshot_date), 'yymmdd')
+      into max_date
+      from ASSETS_snapshot_index;
+    -- 是否已经有分区
+    if haspart = 0 and (max_date is null or max_date < shortDate) then
+      execute immediate 'ALTER TABLE ASSETS_SNAPSHOT
+            add partition P_' || shortDate ||
+                        ' values less than(to_date(''' || strSnapshotDate ||
+                        ''',''yyyy-mm-dd HH24:MI:SS''))
+                    tablespace COLLEGEINFO';
+    end if;
+  end if;
+
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx5');
+  --插入数据
+  insert into assets_snapshot
+    (snapshot_date,
+     code,
+     name,
+     assets_code_parent,
+     assets_sort_code,
+     source,
+     base_dep_code,
+     direction,
+     base_teacher_no_keeper,
+     price,
+     outlay_subject,
+     stock_date,
+     state,
+     attach_num,
+     attach_price,
+     assets_sort_name,
+     belong,
+     type,
+     sub_type,
+     furniture_batch_code,
+     dispdate,
+     stock_price,
+     is_car,
+     jingz,
+     leijzj,
+     book_price,
+     book_num,
+     book_types,
+     drop_bpm_no,
+     drop_attach_num,
+     drop_attach_price,
+     assets_sort_gb_code,
+     assets_sort_gb_name,
+     assets_sort_gb_old_code,
+     assets_sort_gb_old_name,
+     caizxjfly,
+     qitjfly,
+     num,
+     REQUEST_BPM_NO,
+     gz_category)
+    select prmSnapshotDate,
+           code,
+           name,
+           assets_code_parent,
+           assets_sort_code,
+           source,
+           base_dep_code,
+           direction,
+           base_teacher_no_keeper,
+           price,
+           outlay_subject,
+           stock_date,
+           state,
+           attach_num,
+           attach_price,
+           assets_sort_name,
+           belong,
+           type,
+           sub_type,
+           furniture_batch_code,
+           dispdate,
+           stock_price,
+           is_car,
+           jingz,
+           leijzj,
+           book_price,
+           book_num,
+           book_types,
+           drop_bpm_no,
+           drop_attach_num,
+           drop_attach_price,
+           assets_sort_gb_code,
+           assets_sort_gb_name,
+           assets_sort_gb_old_code,
+           assets_sort_gb_old_name,
+           caizxjfly,
+           qitjfly,
+           num,
+           REQUEST_BPM_NO,
+           gz_category
+      from sec_bl_assets.assets;
+
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx6');
+
+  --插入统计数据
+  insert into assets_snapshot_index
+    (snapshot_date, total_num, total_price, in_stock_num, in_stock_price)
+    select prmSnapshotDate,
+           sum(case
+                 when assets_code_parent is null then
+                  1
+                 else
+                  0
+               end) as total_num,
+           nvl(sum(nvl(price, 0)), 0) as total_price,
+           sum(case
+                 when state > 0 and assets_code_parent is null then
+                  1
+                 else
+                  0
+               end) as in_stock_num,
+           sum(case
+                 when state > 0 then
+                  nvl(price, 0)
+                 else
+                  0
+               end) as in_stock_price
+      from assets_snapshot
+     where snapshot_date = prmSnapshotDate;
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx7');
+  --更新土地房屋面积
+  update assets_snapshot a
+     set (TUDMJ,
+          JIANZMJ,
+          ZIYMJ,
+          CHUJMJ,
+          CHUZMJ,
+          QITMJ,
+          SHIYMJ,
+          DIAXMJ,
+          HUIYSMJ,
+          CHEKMJ,
+          SHITMJ,
+          PEIDSMJ,
+          JIFMJ,
+          BANGSMJ,
+          ZIYJZ,
+          CHUJJZ,
+          CHUZJZ,
+          QITJZ,
+          dixmj,
+          fentmj,
+          duymj,
+          duiwtzjz,
+          duiwtzmj,
+          tudsyqlx) =
+         (select TUDMJ,
+                 JIANZMJ,
+                 ZIYMJ,
+                 CHUJMJ,
+                 CHUZMJ,
+                 QITMJ,
+                 SHIYMJ,
+                 DIAXMJ,
+                 HUIYSMJ,
+                 CHEKMJ,
+                 SHITMJ,
+                 PEIDSMJ,
+                 JIFMJ,
+                 BANGSMJ,
+                 ZIYJZ,
+                 CHUJJZ,
+                 CHUZJZ,
+                 QITJZ,
+                 dixmj,
+                 fentmj,
+                 duymj,
+                 duiwtzjz,
+                 duiwtzmj,
+                 tudsyqlx
+            from sec_bl_assets.assets_house
+           where code = a.code)
+   where a.code in (select code from sec_bl_assets.assets_house) and
+   snapshot_date = prmSnapshotDate;
+  --提交
+  prmResult := 1;
+  --记录日志
+  update assets_snapshot_log
+     set prmresult = 1, prmmsg = ''
+   where to_char(snapshot_time, 'yyyy-MM-dd') =
+         to_char(prmSnapshotDate, 'yyyy-MM-dd');
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx9');
+  commit;
+
+  DBMS_OUTPUT.PUT_LINE('xxxxxxx10' || prmresult);
+  return;
+exception
+  when others then
+    rollback;
+    prmResult := 0;
+    prmMsg    := SQLERRM;
+    DBMS_OUTPUT.PUT_LINE(prmMsg);
+    --记录日志
+    update assets_snapshot_log
+       set prmresult = 0, prmmsg = prmMsg
+     where to_char(snapshot_time, 'yyyy-MM-dd') =
+           to_char(prmSnapshotDate, 'yyyy-MM-dd');
+    commit;
+    return;
+end snapshot_assets;
+
+
+
+sec_assets.update_instance_code_dep:
+create or replace procedure sec_assets.update_instance_code_dep(msg out varchar2) is
+   i number;
+begin
+  i := 0;
+  for data in (select a.business_code, a.base_dep_code, a.id, b.bpm_no
+                 from assets_acceptance a
+                 left join sec_base.business_process_instance b
+                   on a.id = b.business_id
+                where b.business_id is not null
+                  and b.business_code is null) loop
+    update sec_base.business_process_instance
+       set business_code = data.business_code,
+           base_dep_code = data.base_dep_code
+     where bpm_no = data.bpm_no;
+    i := i + 1;
+  end loop;
+  for data in (select a.business_code, a.base_dep_code, a.id, b.bpm_no
+                 from assets_change a
+                 left join sec_base.business_process_instance b
+                   on a.id = b.business_id
+                where b.business_id is not null
+                  and b.business_code is null) loop
+    update sec_base.business_process_instance
+       set business_code = data.business_code,
+           base_dep_code = data.base_dep_code
+     where bpm_no = data.bpm_no;
+    i := i + 1;
+  end loop;
+  commit;
+  msg := 'success --' || to_char(i);
+  return;
+exception
+  when others then
+    rollback;
+    msg := 'faild --' || to_char(i);
+    return;
+end update_instance_code_dep;
+
+
+
+SYNC_ZJU_BASE_TEACHER:
+CREATE OR REPLACE PROCEDURE SYNC_ZJU_BASE_TEACHER IS
+
+BEGIN
+
+  --插入未同步的教师信息
+  insert into base_teacher
+    (no,
+     name,
+     gender,
+     base_Dep_code,
+     id_no,
+     country,
+     nation,
+     origin,
+     pay_no,
+     PREPARE_TYPE,
+     birthday,
+     qualificate,
+     GRAD_TIME,
+     GRAD_SCHOOL,
+     learn_spec,
+     degree,
+     base_spec_code,
+     base_spec_name,
+     duty,
+     duty_name,
+     duty_level,
+     DUTY_TIME,
+     WORKING,
+     state,
+     APPOINTMENT,
+     POSITION_GRADE,
+     RESEARCH_DIRECTION,
+     TELEPHONE,
+     ADDRESS,
+     MOBILE,
+     EMAIL,
+     QQ,
+     WORK_TIME,
+     JOIN_SCHOOL_TIME,
+     LEAVE_SCHOOL_TIME,
+     RETIRE_TIME,
+     PARTY_POLICY,
+     MARRIAGE,
+     POLITICAL_STATUS,
+     PASSWORD)
+    select no,
+           name,
+           nvl(gender, '0'),
+           base_Dep_code,
+           trim(id_no),
+           country,
+           nation,
+           origin,
+           pay_no,
+           PREPARE_TYPE,
+           birthday,
+           trim(qualificate),
+           GRAD_TIME,
+           GRAD_SCHOOL,
+           learn_spec,
+           degree,
+           base_spec_code,
+           base_spec_name,
+           duty,
+           duty_name,
+           duty_level,
+           DUTY_TIME,
+           case
+             when WORKING in
+                  (select dm from sec_dec.state where state = '1') then
+              '101'
+             else
+              '99'
+           end working,
+           case
+             when WORKING in
+                  (select dm from sec_dec.state where state = '1') then
+              '1'
+             else
+              '0'
+           end state,
+           APPOINTMENT,
+           POSITION_GRADE,
+           /*RESEARCH_DIRECTION*/
+           null,
+           TELEPHONE,
+           ADDRESS,
+           case
+             when length(MOBILE) > 30 then
+              null
+             else
+              MOBILE
+           end,
+           EMAIL,
+           QQ,
+           WORK_TIME,
+           JOIN_SCHOOL_TIME,
+           LEAVE_SCHOOL_TIME,
+           RETIRE_TIME,
+           /*substr(PARTY_POLICY,'1','64')*/
+           null,
+           MARRIAGE,
+           POLITICAL_STATUS,
+           MD5(NO)
+      from sec_dec.base_teacher
+     where no not in (select no from sec_base.base_teacher);
+
+  --校正教师姓名
+  UPDATE BASE_TEACHER BT
+     SET BT.NAME =
+         (SELECT JZ.NAME FROM SEC_DEC.BASE_TEACHER JZ WHERE BT.NO = JZ.NO)
+   WHERE BT.NO IN (SELECT A.NO
+                     FROM BASE_TEACHER A
+                     LEFT JOIN SEC_DEC.BASE_TEACHER VBT
+                       ON A.NO = VBT.NO
+                    WHERE TRIM(A.NAME) != TRIM(VBT.NAME));
+
+  --矫正单位
+  UPDATE BASE_TEACHER BT
+     SET BT.BASE_DEP_CODE =
+         (SELECT B.BASE_DEP_CODE
+            FROM SEC_DEC.BASE_TEACHER B
+           WHERE BT.NO = B.NO)
+   WHERE BT.NO IN
+         (SELECT A.NO
+            FROM BASE_TEACHER A
+            LEFT JOIN (SELECT A.NO, A.BASE_DEP_CODE
+                        FROM SEC_DEC.BASE_TEACHER A) VBT
+              ON A.NO = VBT.NO
+           WHERE TRIM(nvl(A.BASE_DEP_CODE, '*')) !=
+                 TRIM(nvl(VBT.BASE_DEP_CODE, '*'))
+             AND VBT.BASE_DEP_CODE IN (SELECT CODE FROM BASE_DEP));
+
+  --初始化建账权限
+  FOR TEACHER IN (SELECT BASE_DEP_CODE, NO
+                    FROM BASE_TEACHER
+                   WHERE STATE = 1
+                     AND WORKING = '101') LOOP
+    INSERT INTO SEC_ASSETS.ASSETS_DEP
+      SELECT T.CODE, T.NO
+        FROM (SELECT TEACHER.NO, CODE
+                FROM BASE_DEP
+               START WITH CODE = TEACHER.BASE_DEP_CODE
+              CONNECT BY PRIOR CODE = BASE_DEP_CODE_PARENT) T
+        LEFT JOIN SEC_ASSETS.ASSETS_DEP ED
+          ON T.NO = ED.BASE_TEACHER_NO
+         AND T.CODE = ED.BASE_DEP_CODE
+       WHERE ED.BASE_TEACHER_NO IS NULL;
+  END LOOP;
+
+  --更新教师所在状态
+  UPDATE BASE_TEACHER
+     SET STATE = '0', WORKING = '007'
+   WHERE NO IN
+         (SELECT NO
+            FROM SEC_DEC.BASE_TEACHER
+           WHERE WORKING in
+                 (select dm from sec_dec.state where state != '1'))
+     AND STATE = '1';
+
+  --更新输入码
+  UPDATE BASE_TEACHER
+     SET INPUT_CODE = NO || '|' || NAME || '|' || GET_PINYIN(NAME) || '|' ||
+                      UPPER(GETHZPY.GETHZFULLPY(NAME));
+  COMMIT;
+
+  RETURN;
+EXCEPTION
+  WHEN OTHERS THEN
+    ROLLBACK;
+    RETURN;
+END SYNC_ZJU_BASE_TEACHER;
+
+
+
+EORK_DEP:
+CREATE OR REPLACE PROCEDURE work_dep IS
+
+BEGIN
+--初始化建账权限
+  FOR TEACHER IN (SELECT BASE_DEP_CODE, NO
+                    FROM BASE_TEACHER
+                   WHERE STATE = 1
+                     AND WORKING = '101') LOOP
+    INSERT INTO SEC_ASSETS.ASSETS_DEP
+      SELECT T.CODE, T.NO
+        FROM (SELECT TEACHER.NO, CODE
+                FROM BASE_DEP
+               START WITH CODE = TEACHER.BASE_DEP_CODE
+              CONNECT BY PRIOR CODE = BASE_DEP_CODE_PARENT) T
+        LEFT JOIN SEC_ASSETS.ASSETS_DEP ED
+          ON T.NO = ED.BASE_TEACHER_NO
+         AND T.CODE = ED.BASE_DEP_CODE
+       WHERE ED.BASE_TEACHER_NO IS NULL;
+  END LOOP;
+
+  COMMIT;
+
+  RETURN;
+EXCEPTION
+  WHEN OTHERS THEN
+    ROLLBACK;
+    RETURN;
+END work_dep;
+
+
+
+
 12、创建job
 begin
   sys.dbms_job.submit(job => :job,
@@ -540,6 +1404,22 @@ begin
   commit;
 end;
 /
+
+
+
+begin
+  sys.dbms_job.submit(job => :job,
+                      what => 'sync_scu_base_teacher;',
+                      next_date => to_date('01-01-4000', 'dd-mm-yyyy'),
+                      interval => 'sysdate+1/24');
+  sys.dbms_job.broken(job => :job,
+                      broken => true,
+                      next_date => to_date('01-01-4000', 'dd-mm-yyyy'));
+  commit;
+end;
+/
+
+
 
 13、分区表详解
 创建用户并授权
