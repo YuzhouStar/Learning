@@ -12,4 +12,75 @@ vi iptables.rule
 #请先输入你的相关参数，不要输入错误了！
 EXTIF="eth0"   #这个是可以连上public ip的网路界面
 INIF="eth1"   #内部LAN的连接接口；若无则写成INIF=""
+INNET="192.168.100.0/24"   #若无内部网络界面，请填写成INNET=""
+export EXTIF INIF INNET
+
+#第一部分，针对本机的防火墙设定！###############################
+#1、先设定好和信的网络功能：
+echo "1" > /proc/sys/net/ipv4/tcp_syncookies
+echo "1" > /proc/sys/net/ipv4/icmp_echo_ignore_broadcasts
+for i in /proc/sys/net/ipv4/conf/*/{rp_filter,log_martians};do
+    echo "1" >$i
+done
+for i in /proc/sys/net/ipv4/conf/*/{accept_source_route,accept_redirects,\
+send_redirects};do
+    echo "0" >$i
+done
+
+#2、清除规则、设定预设政策及开放lo与相关的设定值
+PATH=/sbin:/usr/sbin:/bin:/usr/bin:/usr/local/sbin:/usr/local/bin;export PATH
+iptables -F
+iptables -X
+iptables -Z
+iptables -P INPUT DROP
+iptables -P OUTPUT ACCEPT
+iptables -P FORWARD ACCEPT
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+#3、启动额外的防火墙script模组
+if [-f /usr/local/virus/iptables/iptables.deny]; then
+    sh /usr/local/virus/iptables/iptables.deny
+fi
+if [-f /usr/local/virus/iptables/iptables.allow]; then
+    sh /usr/local/virus/iptables/iptables.allow
+fi
+if [-f /usr/local/virus/httpd-err/iptables.http]; then
+    sh /usr/local/virus/httpd-err/iptables.http
+fi
+
+#4、允许某些类型的ICMP封包进入
+AICMP="0 3 3/4 4 11 12 14 16 18"
+for tyicmp in $AICMP
+do
+iptables -A INPUT -i $EXTIF -p icmp --icmp-type $tyicmp -j ACCEPT
+done
+
+#5、允许某些服务的进入，请依照你自己的环境开启
+#iptables -A INPUT -p TCP -i $EXTIF --dport 21 --sport 1024:65534 -j ACCEPT #FTP
+#iptables -A INPUT -p TCP -i $EXTIF --dport 22 --sport 1024:65534 -j ACCEPT #SSH
+#iptables -A INPUT -p TCP -i $EXTIF --dport 25 --sport 1024:65534 -j ACCEPT #SMTP
+#iptables -A INPUT -p UDP -i $EXTIF --dport 53 --sport 1024:65534 -j ACCEPT #DNS
+#iptables -A INPUT -p TCP -i $EXTIF --dport 53 --sport 1024:65534 -j ACCEPT #DNS#iptables -A INPUT -p TCP -i $EXTIF --dport 80 --sport 1024:65534 -j ACCEPT #WWW#iptables -A INPUT -p TCP -i $EXTIF --dport 110 --sport 1024:65534 -j ACCEPT #POP3
+#iptables -A INPUT -p TCP -i $EXTIF --dport 443 --sport 1024:65534 -j ACCEPT #HTTPS
+
+
+#第二部分，针对后端主机的防火墙设定！#########################################
+#1、先载入一些有用的模组
+modules="ip_tables iptable_nat ip_nat_ftp ip_nat_irc ip_conntrack ip_conntrack_ftp ip_conntrack_irc"
+for mod in $modules
+do
+  testmod=`lsmod | grep "^${mod}" | awk '{print $1}'`
+  if ["$testmod"==""]then
+      modprobe $mod
+   fi
+done
+
+#2、清除NAT table的规则吧！
+iptables -F -t nat
+iptables -X -t nat
+iptables -Z -t nat
+iptables -t nat -P PREROUTING ACCEPT
+iptables -t nat -P POSTROUTING ACCEPT
+iptables -t nat -P OUTPUT ACCEPT
 
