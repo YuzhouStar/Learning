@@ -84,3 +84,15 @@ iptables -t nat -P PREROUTING ACCEPT
 iptables -t nat -P POSTROUTING ACCEPT
 iptables -t nat -P OUTPUT ACCEPT
 
+#3.若有内部介面存在（双网卡）开放成为路由器，且为IP分享器！
+if["$INIF" !=""];then
+  iptables -A INPUT -i $INIF -j ACCEPT
+  echo "1" > /proc/sys/net/ipv4/ip_forward
+  if["INNET"!=""];then
+    for innet in $INNET
+    do
+      iptables -t nat -A POSTROUTING -s $innet -o $EXTIF -j MASQUERADE
+    done
+  fi
+fi
+#如果
