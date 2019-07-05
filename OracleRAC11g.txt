@@ -1,0 +1,240 @@
+Oracle RAC 11g 实战指南
+
+
+Oracle RAC 11G实战指南
+
+第10章 数据库的备份与恢复--RMAN的用法
+RMAN是oracle提供的一个功能强大的备份/恢复工具。利用这个工具，不仅可以对数据库进行备份与恢复，而且还可以在不通平台的数据库之间移植数据
+。许多第三方的存储管理工具也提供了RMAN的接口，利用RMAN的功能对数据库进行备份与恢复。RMAN:RECOVERY MANENGER
+与传统比，rman优点：
+1)、在RMAN中可以对整个数据库、单个表空间，或者单个数据文件进行完全备份和增量备份。
+2)、所有备份与恢复都是通过RMAN中的命令或者脚本完成的，管理员不需要到操作系统中复制文件。
+3)、RMAN支持主流的磁带机设备，可以把备份产生的文件直接写入磁带。
+4)、利用RMAN可以对数据文件中的坏块进行恢复。
+总之：RMAN强大实用。管理员需要做的工作：指定合理的备份策略，编写备份脚本，并与操作系统的任务调度结合起来，实现备份自动化。RMAN是oracle
+软件的一部分，不需要额外安装。RMAN可以通过EM和命令行两种方式使用。
+10.1 RMAN的基本结构
+1)、目标数据库
+目标数据库就是我们要备份的数据库，也就是重点保护的数据库，他可以是一个RAC集群数据库，也可以是单实例i数据库。可以冷备和热备。当处于归档模式时，
+可以针对整个数据库、某个表空间，或者某个数据文件进行完全备份和增量备份。
+2)、恢复目录
+为了对目标数据库备份，RMAN需要了解目标数据库的结构信息，即目标数据库中有哪些表空间、数据文件等。同时还需要了解以前的备份情况，这些信息
+称为恢复目录(CATALOG)。恢复目录可以存储在目标数据库的控制文件中，也可以存储在另外一个数据库中。oracle建议将恢复目录存储在另外一个数据库
+中，而且把两个数据库分开在两台不同的计算机中运行，最大成都保障数据库安全。
+注意：如果恢复目录存储在目标数据库控制文件中，一旦计算机硬件出现故障，数据库和控制文件可能同时损坏，即使有完整备份文件，也无法恢复
+数据库；如果存储在另外一个数据库中，即使目标数据库所在计算机发生故障，管理员利用备份文件和恢复目录，可以对数据库进行完全恢复。
+3)、RMAN客户端
+RMAN是oracle软件的一部分，用来连接目标数据库、并对其进行备份与恢复的部分。命令行的好处是可以编写复杂的脚本。
+4)、通道
+实际上，RMAN客户端并没有备份恢复功能，只起一个来凝结作用。当RMAN连接到目标数据库时，在数据库实例中启动一个服务器进程，RMAN客户端有关备份
+与恢复的命令都发送给服务器进程执行。通道代表到备份设备的一个数据溜，并对应一个服务器进程。通道将数据读到服务器进程的PGA中，并对数据进行
+处理，然后写入备份设备。
+RMAN支持两种通道：磁盘通道和SBT(system backup to tape)通道。STB设备包括磁带机和带库两种，通常由设备厂家提供的介质管理器控制，oracle
+集成了主流STB设备驱动程序。备份恢复时，可以直接对STB读写。
+每次对数据库备份或恢复时，都需要分配一个或多个通道。如果要备份到磁带上，就分配STB通道，备份到磁盘上，则分配磁盘通道。可手工分配或自动
+分配。
+5)、备份集
+利用RMAN工具，将数据库中一个或多个数据文件、控制文件、重做日志文件等备份到一个称为“备份集”的逻辑结构中。备份集的格式是特定的，只能
+由RMAN来创建和访问。一个备份集包含一个或多个特定格式的二进制文件，每一个文件成为一个备份片。假如要备份10个数据文件，将产生1个备份集，
+这个备份集可能只包含1个备份片，即一个文件。如果备份集的大小超过了文件系统对文件大小的限制，将产生多个备份片，每个不超过文件系统对单个文件
+大小限制。
+对数据备份时，也可以指定备份片大小，以适应存储设备的容量。例如一个备份集大小约为80GB，而一盘磁带容量为20GB，我们可以指定备份片大小为
+20GB，那么这个备份集将包含4个备份片，整好使用4盘磁带。
+tips:利用RMAN，还可以针对数据库中的文件进行“镜像复制”式备份，这种备份相当于在操作系统中对文件进行复制，备份呢产生的我呢见不是RMAN特定
+格式。
+10.2 RMAN的配置
+包括：创建恢复目录、配置RMAN客户端的连接等。
+假设由两个正常运行的数据库，其中ORCL作为目标数据库，TEST作为作为恢复目录数据库。ORCL是一个RAC集群数据库，而TEST一般是一个单实例数据库。
+TEST的数据库可以与ORCL的其中一个数据库实例运行在同一个系统中，也可以运行在一个独立系统中。建议分开运行。RMAN客户端可以位于另外一个系统
+或者与任何一个数据库实例运行在同一个系统中，通过网络同时连接两个数据库。
+
+10.2.1 如何配置RMAN客户端的连接
+一般情况下，SQL*Plus等客户端工具连接数据库实例时，需要通过系统变量ORACLE_SID指定实例名称。RMAN客户端需要同时连接两个数据库的实例，因此
+仅仅指定这个环境变量不够，这时考虑通过网络服务命名的方式连接数据库实例。集体做法是：在RMAN客户端通过NetManager工具为恢复目录所在数据库
+实例创建一个服务命名，然后为目标数据库的其中一个数据库实例创建一个服务命名，这样就可以利用RMAN工具以下面方式分别登陆两个数据库：
+$ rman catalog rman/1234@test
+$ rman target sys/1234@orcl1
+其中catalog和target是关键字，分别用于指定登陆恢复目录数据库和目标数据库。@符号后面的两个字符串就是代表两个数据库实例的服务名。对于目标
+数据库，RMAN客户端可以通过任何一个数据库实例访问数据库。
+10.2.2 恢复目录的创建
+1)、以SYS用户身份登陆TEST数据库，创建表空间RMAN_TS,这个表空间不需要太大，20MB的空间就足够了。
+$ export ORACLE_SID=test
+$ sqlplus sys/1234 as sysdba
+SQL> CREATE TABLESPACE rman_ts DATAFILE '/u01/app/base/oradata/test/rman_ts.dbf' SIZE 20M;
+2)、以SYS用户身份在TEST数据库创建RMAN用户，并指定相关权限。，名字可以任意，单需要特殊权限RECOVERY_CATALOG_OWNER。
+SQL> CREATE USER rman IDENTIFIED BY "RMAN"
+DEFAULT TABLESPACE rman_ts
+QUOTA UNLIMITED ON rman_ts;
+SQL> GRANT connect,resource,recovery_catalog_owner TO rman;
+3)、RMAN用户通过RMAN工具登陆TEST数据库，创建恢复目录。
+$ rman catalog rman/RMAN@test;
+RMAN> CREATE CATALOG TABLESPACE ramn_ts;
+4)、通过RMAN工具同时连接两个数据库，并将目标数据库注册到恢复目录中。一般用SYS用户身份连接目标数据库，不需指定AS SYSDBA。
+$ rman target sys/1234@orcl1 catalog rman/RMAN@test
+RMAN> REGISTER DATABASE;
+通过RMAN工具也可以用下面的方式分别连接两个数据库：
+$ rman
+RMAN> CONNECT target sys/1234@orcl1
+RMAN> CONNECT catalog rman/1234@test
+退出RMAN，输入EXIT
+
+10.2.3 如何对目标数据库的归档日志文件进行配置
+在RAC集群数据库中，每个节点上的数据库实例将独立产生重做日志，对日志文件的归档也是相互独立的。在对数据库进行恢复时，数据库服务器需要
+读取所有归档日志文件。由于恢复数据库的操作可以在任何一个节点上进行，所以对归档日志的存储路径设置时，需要考虑：在执行恢复的节点上，是否
+可以访问其他所有系欸但上产生的归档日志文件。
+存储归档日志三种方法：
+1)、在共享设备上创建一个集群共享文件系统，如ACFS，然后把这个文件系统直接挂在到每个节点的名称相同的目录下，然后在每个数据库实例中把这个存储
+位置指定为归档日志文件的存储位置。他们的名称可以通过初始化参数LOG_ARCHIVE_FORMAT来保证是唯一的。
+2)、每个节点创建一个相同的目录，每个节点实例都把这个目录设置为归档日志存储位置。第数据库恢复前，选一个节点，将其他所有节点归档日志文件
+复制到这个节点同名目录下，以后对数据库恢复就在这个节点上进行。
+3)、每个节点创建不同的目录作为归档日志存储路径。恢复前，选择一个节点，创建与其他所有节点同名的目录，并将归档日志拷过来，或者通过nfs
+将其他节点上归档日志文件目录映射到这台上对应目录。在此节点进行备份。
+注意：需要考虑归档日志存储在实例节点本地目录，如果节点磁盘损坏，归档日志文件将丢失，这样数据库就不能恢复了。
+
+10.3 如何利用RMAN对数据库进行备份
+10.3.1 通道的设置
+在进行数据库恢复时，需要分配一个或多个通道。
+自动分配：在RMAN中先对通道进行设置，比如通道数目、备份文件的存储路径和文件名、默认通道类型等
+手动分配：在每次备份呢或恢复时，通过命令指定通道信息。手动指定通道将覆盖自动分配的通道信息。
+在RMAN中，可以对磁盘通道和磁带通道分别进行设置，并指定默认通道类型。一般要备份多个文件，采用多个通道并行读写。
+例子：
+RMAN> CONFIGURE DEVICE TYPE sbt PARALLELISM 2;
+
+
+
+
+rman catalog rman/RMAN target /
+
+
+10.5两个实际的例子
+本节分别模拟数据文件损坏和磁盘损坏的情况，，完整介绍如何对表空间进行玩去拿备份和增量备份，以及利用这些备份和重做日志对数据文件进行恢复。
+10.5.1模拟数据文件损坏
+（1）、SYS用户利用RMAN工具连接目标数据库的任何一个实例，对表空间USERS进行0级备份
+rman catalog rman/RMAN target sys/1234@orcl
+RMAN>
+RUN {
+    ALLOCATE CHANNEL ch1 DEVICE TYPE DISK;
+    ALLOCATE CHANNEL ch2 DEVICE TYPE DISK;
+    BACKUP INCREMENTAL LEVEL 0 tablespace users
+    FORMAT '/home/oradata/users_0_%T_%p';
+    RELEASE CHANNEL ch1;
+    RELEASE CHANNEL ch2;
+    }
+（2）、以SCOTT用户身份登陆目标数据库，再表空间创建表T1
+（3）、SYS用户对表空间USERS进行1级备份
+RMAN>
+RUN {
+    ALLOCATE CHANNEL ch1 DEVICE TYPE DISK;
+    ALLOCATE CHANNEL ch2 DEVICE TYPE DISK;
+    BACKUP INCREMENTAL LEVEL 1 tablespace users
+    FORMAT '/home/oracle/users_1_%T_%p';
+    RELEASE CHANNEL ch1;
+    RELEASE CHANNEL ch2;
+    }
+（4）、SCOTT用户向表T1中写入两行数据，并提交事务
+（5）、SYS用户对表空间进行2级备份（命令省略）
+RUN {
+    ALLOCATE CHANNEL ch1 DEVICE TYPE DISK;
+    ALLOCATE CHANNEL ch2 DEVICE TYPE DISK;
+    BACKUP INCREMENTAL LEVEL 2 tablespace users
+    FORMAT '/home/oracle/users_2_%T_%p';
+    RELEASE CHANNEL ch1;
+    RELEASE CHANNEL CH2;
+    }
+（6）、SCOTT用户向表T1中写入另外两行数据，并提交事务
+
+再上面命令中，对表空间既做了完全备份，又做了增量备份，对数据文件恢复时，先利用0级备份呢，再依次利用后面的增量备份进行恢复。最后一步SCOTT用户写入的数据是没有备份的，只能依靠重做日志进行恢复。
+模拟数据文件损坏：
+SQL*Plus中对USERS表空间数据文件脱机，然后操作系统中或ASM磁盘组中删除表空间USERS中的数据文件，或对其改名，然后SQL*Plus或RMAN对这个数据文件进行联机操作。，将会看到报错。
+接下来对数据文件进行恢复，保证备份集中的文件都在FORMAT命令所指定的位置，然后恢复，最后将表空间状态置为ONLINE。
+RMAN>
+RUN {
+    ALLOCATE CHANNEL ch1 DEVICE TYPE DISK;
+    ALLOCATE CHANNEL ch2 DEVICE TYPE DISK;
+    RESTORE TABLESPACE users;
+    RECOVER TABLESPACE users;
+    SQL 'ALTER TABLESPACE users ONLINE';
+    RELEASE CHANNEL ch1;
+    RELEASE CHANNEL ch2;
+    }
+
+10.5.2模拟磁盘损坏的例子
+同样表现为数据文件无法访问，恢复时，需要指定一个新的存储位置，把数据文件恢复到这个位置。恢复USERS步骤如下：
+（1）、按照10.5.1节中第1-6步对表空间进行备份
+（2）、对表空间USERS或表空间中的数据文件执行脱机操作，然后删除数据文件或重命名，模拟磁盘故障
+（3）、对数据文件执行联机操作，观察出现报错信息
+（4）、对表空间USERS恢复，将数据文件恢复到新的位置
+RMAN>
+RUN {
+    ALLOCATE CHANNEL ch1 DEVICE TYPE DISK;
+    ALLOCATE CHANNEL ch2 DEVICE TYPE DISK;
+    SET NEWNAME FOR DATAFILE TO '+DG1/oracle/datafile/users.dbf';
+    RESTORE TABLESPACE users;
+    RECOVER TABLESPACE users;
+    SQL 'ALTER TABLESPACE users ONLINE';
+    RELEASE CHANNEL ch1;
+    RELEASE CHANNEL ch2;
+    }
+（5）、SCOTT用户身份登陆目标数据库，查看数据是否已经恢复
+
+10.6如何对坏块进行恢复
+10.6.1什么叫介质恢复
+块截至恢复时指对数据文件中单个数据卡所进行的恢复。好处：一是只需要恢复少数几个数据块，恢复时间大大减少；二是数据文件仍然可以处在ONLINE状态，用户让然可以访问数据文件中的其他数据块。
+数据库第一次发现一个数据块损坏时，便标记它，记录下来。数据块顺坏分为物理损坏和逻辑损坏。
+
+数据块损坏，要恢复，必须满足以下条件：
+数据库必须是归档模式，而且数据块服务器状态时OPEN或MOUNT；
+对数据库必须进行0级备份或FULL备份，且备份可用；
+数据库的FLASHBACK功能必须是ENABLED；
+数据库归档日志必须是保留完整。
+10.6.2如何进行块截至恢复
+数据块损坏信息可从多种渠道获得，如数据库警告文件、用户进程跟踪文件、DBVERIFY工具的执行结果、动态性能视图V$DATABASE_BLOCK_CORRUPTION等
+
+利用RMAN工具，可以对单个数据块进行恢复。
+rman catalog rman/RMAN target sys/1234@orcl1
+RMAN>
+RECOVER
+DATAFILE 7 BLOCK 3;
+DATAFILE 2 BLOCK 19;
+恢复之前确保通道是可用的。恢复时，也可以指定从一个特定的备份集进行恢复。
+RMAN>
+RECOVER
+DATAFILE 7 BLOCK 3
+DATAFILE 2 BLOCK 19
+FROM BACKUPSET 10;
+其中备份集编号通过下面命令获得：
+RMAN>LIST BACKUPSET SUMMARY;
+对佛那个太锌跟那个视图V$DATABASE_BLOCK_CORRUPTION中记录的坏块一起恢复：
+RMAN>RECOVER CORRUPTION LIST;
+
+
+10.7如何对数据进行跨平台移植
+数据库所处操作系统相同：可以利用“导入与导出”方法把一个表、某个用户所拥有的所有表或者一个表空间在两个数据库之间移植。
+操作系统不同：也可以利用导入导出把一个表或某个用户拥有的所有表进行移植。数据量大最好对表空间移植。尽管各平台文件格式不通，但不同平台移植还是很容易，有的不需要格式转换。
+不通平台数据库移植：
+10.7.1字节存储次序相同时的移植
+不通平台，数据文件的格式差别在与字节存储次序不同。动态性能视图V$TRANSPORTABLE_PLATFORM中，可以查询Oracle所支持的操作系统平台的ID和名称，以及这些平台下数据文件的字节存储次序。
+SQL>
+SELECT platform_id,platform_name,endian_format FROM v$transportable_platform ORDER BY platform_id;
+确认当前数据库操作平台信息：
+SELECT platform_id,platform_name FROM v$database;
+字节存储次序相同，好说，移植users
+（1）、在第一个数据库中将表空间置为READ ONLY状态
+SQL>ALTER TABLESPACE USERS READ ONLY;
+（2）、利用EXP命令将表空间的结构信息导出到元数据文件中
+（3）、将表空间中的数据文件和元数据文件复制到第二个数据库所在系统中
+（4）、利用IMP命令将表空间导入第二个数据库中
+（5）、在第一个数据库中将表空间置为READ WRITE状态
+SQL>ALTER TABLESPACE USERS READ WRITE;
+导出时，用户需要具备EXP_FULL_DATABASE权限；导入时，用户需要具有IMP_FULL_DATABASE系统权限
+exp \'sys/1234 AS SYSDBA\' FILE=users.exp \TRANSPORT_TABLESPACE=Y TABLESPACE=user
+imp \'sys/1234 AS SYSDBA\' FILE=users.exp \TRANSPORT_TABLESPACE=Y DATAFILES=(+DATA/orcl/datafile/users01.dbf)
+expdp sys/1234@orcl dumpfile=users.dmp tablespaces=tbs01,tbs02 logfile=exp.log directory=expdir job_name=my_job
+create or repalce directory dump_dir as 'c:\pump_dir';
+impdp sys/1234@orcl directory=dump_dir dumpfile=users.dmp remap_tablespace=tbs1:tbs3
+
+
+
+超实用的oracle数据库实时监控rman备份锦城脚本
+SELECT SID,SERIAL#,CONTEXT,SOFAR,TOTALWORK,ROUND(SOFAR / TOTALWORK * 100, 2) "%_COMPLETE" FROM  gV$SESSION_LONGOPS WHERE OPNAME LIKE
+'RMAN%' AND OPNAME NOT LIKE '%aggregate%' AND TOTALWORK != 0 AND SOFAR <> TOTALWORK;
