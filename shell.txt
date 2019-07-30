@@ -1,0 +1,154 @@
+ps -ef | grep java | grep /speedec/server/apache-tomcat- | awk '{print $2,$9}'
+
+#auto install zabbix on centos7 and centos 6
+#!/bin/bash
+#PID=`ps -ef | grep java | grep /speedec/server/apache-tomcat- | awk '{print $2,$9}'`
+#echo $PID
+echo "Please input school code:"
+read school
+echo "开始获取操作系统版本......"
+version=`cat /etc/*-release | grep CentOS\ Linux\ release | awk '!a[$0]++' | awk '{print $4}'`
+if  [[ "$version" =~ ^5.\s* ]];then
+  echo "version is 5"
+elif [[ "$version" =~ ^6.\s* ]];then
+  echo "version is 6"
+elif [[ "$version" =~ ^7.\s* ]];then
+  echo "version is 7"
+else
+  echo "version is unknown"
+fi
+hostlen=`hostname | awk '{print length($0)}'`
+if [[ $hostlen -le 4 ]] || [[ `hostname` =~ ^localhost.\s* ]];then
+  hostname=${school}${HOSTNAME}
+  echo "修改主机名为："
+  echo $hostname
+    if [[ "$version" =~ ^7.\s* ]];then
+      hostnamectl set-hostname $hostname
+      hostname $hostname
+      sed -i "s/127\.0\.0\.1.*/& $hostname/g" /etc/hosts
+      #echo "HOSTNAME=$hostname" >>/etc/networks
+    elif [[ "$version" =~ ^6.\s* ]];then
+      sed -i 's/HOSTNAME=/#HOSTNAME=/g' /etc/sysconfig/network
+      echo "HOSTNAME=$hostname" >>/etc/sysconfig/network
+      #echo $hostname | sed 's/127\.0\.0\.1.*/ &1/g' /etc/hosts
+      hostname $hostname
+      sed -i "s/127\.0\.0\.1.*/& $hostname/g" /etc/hosts
+    elif [[ "$version" =~ ^5.\s* ]];then
+      echo "请手动修改主机名"
+    else
+      echo "版本不符合规定"
+    fi
+else
+  echo "主机名合格，不需要修改"
+fi
+#####判断目录是否存在并输出目录所在磁盘使用率#####
+#echo "Please enter the file directory:"
+read DIRECTORY
+df -h $DIRECTORY | awk'{print $1,$2,$4}'
+
+#echo "开始获取主机名......"
+#hostname=$(echo $HOSTNAME)
+#echo $hostname
+
+#####判断目录是否存在并输出目录所在磁盘使用率#####
+#echo "Please enter the file directory:"
+#read DIRECTORY
+echo "进入目录/speedec/download,下载文件......"
+if [ ! -d "/speedec/download" ]; then
+  mkdir -p /speedec/download
+  cd /speedec/download/ 
+  echo "开始下载文件......"
+  if [[ "$version" =~ ^7.\s* ]];then
+    wget -c http://sbc.scu.edu.cn/speed_download/zabbix-agent-3.4.15-1.el7.x86_64.rpm
+    echo "下载完成"
+  elif [[ "$version" =~ ^6.\s* ]];then
+    wget -c http://sbc.scu.edu.cn/speed_download/zabbix-agent-3.4.15-1.el6.x86_64.rpm
+    echo "下载完成"
+  elif [[ "$version" =~ ^5.\s* ]];then
+    wget -c http://sbc.scu.edu.cn/speed_download/zabbix-agent-3.4.15-1.el5.x86_64.rpm
+    echo "下载完成"
+  else
+    echo "下载失败"
+  fi
+elif [ -d "/speedec/download" ]; then
+  cd /speedec/download/
+  echo "开始下载文件......"
+  if [[ "$version" =~ ^7.\s* ]];then
+    wget -c http://sbc.scu.edu.cn/speed_download/zabbix-agent-3.4.15-1.el7.x86_64.rpm
+    echo "下载完成"
+  elif [[ "$version" =~ ^6.\s* ]];then
+    wget -c http://sbc.scu.edu.cn/speed_download/zabbix-agent-3.4.15-1.el6.x86_64.rpm
+    echo "下载完成"
+  elif [[ "$version" =~ ^5.\s* ]];then
+    wget -c http://sbc.scu.edu.cn/speed_download/zabbix-agent-3.4.15-1.el5.x86_64.rpm
+    echo "下载完成"
+  else
+    echo "下载失败"
+  fi
+else
+  echo "未知错误"
+fi
+###开始安装zabbix###
+echo "开始安装zabbix客户端"
+package=`ls -l /speedec/download/ | grep zabbix-agent | awk '{print $9}'`
+if [ -f "$package" ];then
+  rpm -ivh $package
+else
+  echo "请重新下载安装包"
+fi
+#for package in "zabbix-agent-3.4.15-1.el5.x86_64.rpm zabbix-agent-3.4.15-1.el6.x86_64.rpm zabbix-agent-3.4.15-1.el7.x86_64.rpm";
+#do
+#  if [ -f "$package" ];then
+#    rpm -ivh $package
+#  else
+#    echo "请重新下载安装包"
+#  fi
+#done
+###修改配置文件###
+echo "修改配置文件..."
+sed -i 's/Server=127.0.0.1/Server=120.26.209.247/g' /etc/zabbix/zabbix_agentd.conf
+sed -i 's/ServerActive=127.0.0.1/ServerActive=120.26.209.247/g' /etc/zabbix/zabbix_agentd.conf
+sed -i "s/Hostname=Zabbix server/Hostname=$hostname/g" /etc/zabbix/zabbix_agentd.conf
+if [[ "$version" =~ ^7.\s* ]];then
+  systemctl enable zabbix-agent.service
+elif [[ "$version" =~ ^6.\s* ]];then
+  chkconfig zabbix-agent on
+else
+  chkconfig zabbix-agent on
+fi
+###开启防火墙端口###
+firewallmod=`firewall-cmd --stat`
+if [[ "$version" =~ ^7.\s* ]] && [ $firewallmod == 'running' ];then
+  firewall-cmd --list-ports
+  firewall-cmd --permanent --zone=public --add-port=10050/tcp
+  firewall-cmd --permanent --zone=public --add-port=10051/tcp
+  firewall-cmd --permanent --zone=public --add-port=22/tcp
+  firewall-cmd --reload
+  firewall-cmd --list-ports
+else
+  #echo "-A INPUT -m state --state NEW -m tcp -p tcp --dport 22 -j ACCEPT" >> /etc/sysconfig/iptables
+  iptables -A INPUT -m state --state NEW -m tcp -p tcp --dport 22 -j ACCEPT
+  iptables -A INPUT -m state --state NEW -m tcp -p tcp --dport 10050 -j ACCEPT
+  iptables -A INPUT -m state --state NEW -m tcp -p tcp --dport 10051 -j ACCEPT
+  service iptables restart
+fi
+###启动zabbix服务###
+if [[ "$version" =~ ^7.\s* ]];then
+  systemctl start zabbix-agent
+  ps -ef | grep zabbix
+    if [[ $? -eq 0 ]];then
+      echo "zabbix安装成功！！！"
+    else
+      echo "zabbix进程未启动，请检查配置！"
+    fi
+else
+  service zabbix-agent start
+  ps -ef | grep zabbix
+    if [[ $? -eq 0 ]];then
+      echo "zabbix安装成功！！！"
+    else
+      echo "zabbix进程未启动，请检查配置！"
+    fi
+fi
+#ctive: active (running)
+#ls -al $DIRECTORY | awk '{print $1,$2,$4}'
